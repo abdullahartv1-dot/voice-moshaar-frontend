@@ -69,8 +69,20 @@
   },
   "call": {
     "title": "Live Call",
-    "subtitle": "Real-time AI conversation (coming soon)",
-    "coming_soon": "Coming Soon"
+    "subtitle": "Real-time AI voice conversation",
+    "coming_soon": "Coming Soon",
+    "start": "Start Call",
+    "hangup": "Hang Up",
+    "mute": "Mute",
+    "unmute": "Unmute",
+    "reset": "New Conversation",
+    "state_idle": "Ready",
+    "state_disconnected": "Disconnected",
+    "state_listening": "Listening...",
+    "state_thinking": "Thinking...",
+    "state_speaking": "Speaking...",
+    "you": "You",
+    "assistant": "Assistant"
   },
   "common": {
     "loading": "Loading...",

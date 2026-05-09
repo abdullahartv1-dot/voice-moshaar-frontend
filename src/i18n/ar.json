@@ -69,8 +69,20 @@
   },
   "call": {
     "title": "مكالمة مباشرة",
-    "subtitle": "محادثة فورية باستخدام الذكاء الاصطناعي (قريباً)",
-    "coming_soon": "قريباً"
+    "subtitle": "محادثة صوتية فورية بالذكاء الاصطناعي",
+    "coming_soon": "قريباً",
+    "start": "ابدأ المكالمة",
+    "hangup": "إنهاء",
+    "mute": "كتم",
+    "unmute": "فتح المايك",
+    "reset": "محادثة جديدة",
+    "state_idle": "جاهز",
+    "state_disconnected": "غير متصل",
+    "state_listening": "يستمع...",
+    "state_thinking": "يفكر...",
+    "state_speaking": "يتحدث...",
+    "you": "أنت",
+    "assistant": "المساعد"
   },
   "common": {
     "loading": "جارٍ التحميل...",
