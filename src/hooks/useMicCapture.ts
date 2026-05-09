@@ -12,10 +12,12 @@ import * as React from "react"
  */
 export interface MicCaptureOptions {
   /** Fires for every captured chunk. `speaking` is the per-chunk VAD result
-   * — true when this 64 ms window is above the energy threshold. The host
-   * can use this to track when the user was *last* vocalising (not just
-   * the start of their turn) and apply a patient silence-based EOU. */
-  onChunk: (pcm16le16k: ArrayBuffer, speaking: boolean) => void
+   * — true when this 64 ms window is above the energy threshold. `rms` is
+   * the raw RMS energy in [0, ~1] — useful for driving smooth voice-
+   * reactive UI like the call-screen orb. The host can use `speaking` to
+   * track when the user was *last* vocalising for the patient silence-
+   * based EOU. */
+  onChunk: (pcm16le16k: ArrayBuffer, speaking: boolean, rms: number) => void
   /** Fires only on idle ↔ speaking transitions — useful for orb / state UI. */
   onSpeakingChange?: (speaking: boolean) => void
   vadThreshold?: number

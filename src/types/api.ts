@@ -16,11 +16,40 @@ export interface VoicesListResponse {
   voices: Voice[]
 }
 
+/** Spectral metrics for a single audio file — used by the clone-page
+ *  before/after panel to show the user what changed when their upload
+ *  went through OpenVoice tone-color enhancement. */
+export interface SpectralMetrics {
+  duration_s?: number
+  peak?: number
+  spectral_flatness?: number
+  sib_to_speech?: number
+  hf_to_speech?: number
+}
+
+export interface CloneEnhancementMetrics {
+  donor?: SpectralMetrics
+  target?: SpectralMetrics
+  enhanced?: SpectralMetrics
+}
+
+export interface CloneEnhancement {
+  donor_id: string
+  gen_ms: number
+  metrics?: CloneEnhancementMetrics
+}
+
 export interface CloneResponse {
   voice_id: string
   name: string
   language: string
   dur_s: number
+  /** True ⇔ on-disk reference went through OpenVoice clarity transfer.
+   *  False usually means the sidecar is disabled or unreachable; the
+   *  clone still works (using the raw upload), just without the
+   *  articulation-clarity boost. */
+  enhanced?: boolean
+  enhancement?: CloneEnhancement | null
 }
 
 export interface VoiceSettings {
