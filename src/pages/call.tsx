@@ -16,7 +16,16 @@ interface Turn {
   text: string
 }
 
-const SILENCE_THRESHOLD_MS = 1200 // 1.2s of mic silence ends the utterance
+// Wait this long after the LAST voiced chunk before declaring end-of-utterance.
+// Natural pauses in Arabic narration sit around 0.5-1 s, so anything below
+// that prematurely cuts the user off mid-thought. 1.8 s is patient enough
+// for "uh, ..." mid-sentence pauses and short exhales without making the
+// turnaround feel sluggish.
+const SILENCE_THRESHOLD_MS = 1800
+// Don't fire EOU until the user has actually said *something* for at least
+// this long total — protects against mic clicks / single-frame noise spikes
+// triggering an empty utterance.
+const MIN_VOICED_MS = 300
 
 export default function CallPage() {
   const { t } = useTranslation()
@@ -32,8 +41,15 @@ export default function CallPage() {
   const [hasMic, setHasMic] = React.useState<boolean | null>(null)
 
   const clientRef = React.useRef<ConversationClient | null>(null)
+  // When did the user last produce a voiced frame? Updated every chunk
+  // (not just at speech-start), so a long sentence keeps refreshing it.
   const lastVoiceTsRef = React.useRef<number>(0)
+  // Total cumulative voiced time in the current turn — used to ignore
+  // single-frame mic noise that isn't actually speech.
+  const voicedMsRef = React.useRef<number>(0)
   const silenceTimerRef = React.useRef<number | null>(null)
+  // 64 ms is the worklet's chunk size at 16 kHz. Used to credit voiced time.
+  const CHUNK_MS = 64
 
   // Pre-flight check: does this device even have an audio input?
   // We do it once on mount so the user sees the situation before they
@@ -59,21 +75,34 @@ export default function CallPage() {
     }
   }, [])
 
-  const handleMicChunk = React.useCallback((pcm: ArrayBuffer) => {
+  const handleMicChunk = React.useCallback((pcm: ArrayBuffer, speaking: boolean) => {
     clientRef.current?.sendAudioChunk(pcm)
-    // End-of-utterance: if we last heard speech > SILENCE_THRESHOLD_MS ago,
-    // tell the server to start the ASR→LLM→TTS pipeline.
+    const now = performance.now()
+    // Refresh the "last voiced" timestamp on EVERY chunk that contains
+    // speech — not just transitions. This is the fix for "agent cuts the
+    // user off mid-sentence": previously lastVoiceTs was only set at
+    // speech-start, so SILENCE_THRESHOLD ran out while the user was still
+    // talking continuously.
+    if (speaking) {
+      lastVoiceTsRef.current = now
+      voicedMsRef.current += CHUNK_MS
+    }
+    // Only treat silence as end-of-utterance after enough voiced content
+    // to be a real turn (filters out a single noise-spike "blip").
     if (
       lastVoiceTsRef.current > 0 &&
-      performance.now() - lastVoiceTsRef.current > SILENCE_THRESHOLD_MS
+      voicedMsRef.current >= MIN_VOICED_MS &&
+      now - lastVoiceTsRef.current > SILENCE_THRESHOLD_MS
     ) {
       lastVoiceTsRef.current = 0
+      voicedMsRef.current = 0
       clientRef.current?.endOfUtterance()
     }
   }, [])
 
-  const handleSpeaking = React.useCallback((speaking: boolean) => {
-    if (speaking) lastVoiceTsRef.current = performance.now()
+  // Transition events drive UI hints (the orb), not the EOU logic above.
+  const handleSpeaking = React.useCallback((_speaking: boolean) => {
+    // intentionally empty for now — the per-chunk path handles EOU
   }, [])
 
   const mic = useMicCapture({
@@ -119,6 +148,8 @@ export default function CallPage() {
   const hangup = () => {
     if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current)
     silenceTimerRef.current = null
+    lastVoiceTsRef.current = 0
+    voicedMsRef.current = 0
     mic.stop()
     clientRef.current?.close()
     clientRef.current = null
@@ -128,6 +159,8 @@ export default function CallPage() {
 
   const reset = () => {
     clientRef.current?.reset()
+    lastVoiceTsRef.current = 0
+    voicedMsRef.current = 0
     setTurns([])
     setStats(null)
   }

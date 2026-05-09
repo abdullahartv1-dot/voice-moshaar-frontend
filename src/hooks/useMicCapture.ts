@@ -11,7 +11,12 @@ import * as React from "react"
  * - VAD computed alongside capture instead of per-chunk in JS
  */
 export interface MicCaptureOptions {
-  onChunk: (pcm16le16k: ArrayBuffer) => void
+  /** Fires for every captured chunk. `speaking` is the per-chunk VAD result
+   * — true when this 64 ms window is above the energy threshold. The host
+   * can use this to track when the user was *last* vocalising (not just
+   * the start of their turn) and apply a patient silence-based EOU. */
+  onChunk: (pcm16le16k: ArrayBuffer, speaking: boolean) => void
+  /** Fires only on idle ↔ speaking transitions — useful for orb / state UI. */
   onSpeakingChange?: (speaking: boolean) => void
   vadThreshold?: number
 }
@@ -91,7 +96,7 @@ export function useMicCapture(opts: MicCaptureOptions): MicCapture {
       const data = ev.data
       if (!data) return
       if (data.type === "chunk") {
-        cbRef.current.onChunk(data.buffer as ArrayBuffer)
+        cbRef.current.onChunk(data.buffer as ArrayBuffer, Boolean(data.speaking))
       } else if (data.type === "vad") {
         cbRef.current.onSpeakingChange?.(Boolean(data.speaking))
       }

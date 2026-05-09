@@ -70,6 +70,8 @@ class MicCaptureProcessor extends AudioWorkletProcessor {
     }
     const rms = Math.sqrt(sumSq / CHUNK_SAMPLES)
     const speaking = rms > this.vadThreshold
+
+    // UI hint event — only on transitions (idle ↔ speaking)
     if (speaking !== this.lastSpeaking) {
       this.port.postMessage({ type: "vad", rms, speaking })
       this.lastSpeaking = speaking
@@ -81,8 +83,13 @@ class MicCaptureProcessor extends AudioWorkletProcessor {
       const s = Math.max(-1, Math.min(1, this.outBuf[i]))
       i16[i] = s < 0 ? s * 0x8000 : s * 0x7fff
     }
-    // Transfer ownership of the underlying buffer to avoid copying.
-    this.port.postMessage({ type: "chunk", buffer: i16.buffer }, [i16.buffer])
+    // Per-chunk message carries the `speaking` flag so the host can
+    // continuously track when the user was last vocalising — not just
+    // at the start of their turn. Transfer ownership to avoid copying.
+    this.port.postMessage(
+      { type: "chunk", buffer: i16.buffer, speaking, rms },
+      [i16.buffer]
+    )
 
     // Reset
     this.outBuf = new Float32Array(CHUNK_SAMPLES)
