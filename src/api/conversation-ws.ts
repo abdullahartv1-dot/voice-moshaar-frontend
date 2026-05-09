@@ -9,12 +9,27 @@ import { createPCMPlayer, type PCMPlayer } from "@/lib/pcm-player"
 
 export type ConvState = "idle" | "listening" | "thinking" | "speaking"
 
+export interface TranscriptInfo {
+  text: string
+  /** Server-side turn index (1-based). Used to dedupe a `late` transcript
+   * that may arrive after the response. */
+  turn?: number
+  /** Relative URL pointing to the user's recorded audio for this turn —
+   * lets the chat UI render an inline player so the user can verify
+   * what was actually sent. */
+  audioUrl?: string
+  /** True when the transcript landed AFTER the response (background ASR
+   * path). The UI should attach it to the matching user bubble. */
+  late?: boolean
+}
+
 export interface ConversationCallbacks {
   onState?: (s: ConvState) => void
-  onTranscript?: (userText: string) => void
+  onTranscript?: (info: TranscriptInfo) => void
   onResponseText?: (assistantText: string) => void
   onError?: (msg: string) => void
   onTurnDone?: (info: { ttfa_ms: number; total_ms: number; chunks: number }) => void
+  onSession?: (sessionId: string) => void
 }
 
 export interface ConversationOptions {
@@ -100,9 +115,17 @@ export class ConversationClient {
         onReady()
         this.setState("idle")
         break
+      case "session":
+        this.cbs.onSession?.(String(msg.session_id ?? ""))
+        break
       case "transcript":
-        this.cbs.onTranscript?.(String(msg.text ?? ""))
-        this.setState("thinking")
+        this.cbs.onTranscript?.({
+          text: String(msg.text ?? ""),
+          turn: typeof msg.turn === "number" ? msg.turn : undefined,
+          audioUrl: typeof msg.audio_url === "string" ? msg.audio_url : undefined,
+          late: Boolean(msg.late),
+        })
+        if (!msg.late) this.setState("thinking")
         break
       case "response_text":
         this.cbs.onResponseText?.(String(msg.text ?? ""))

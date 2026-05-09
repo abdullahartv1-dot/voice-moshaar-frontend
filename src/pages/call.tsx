@@ -1,5 +1,5 @@
 import * as React from "react"
-import { useAtomValue } from "jotai"
+import { useAtom } from "jotai"
 import { useTranslation } from "react-i18next"
 import {
   AlertCircle,
@@ -11,16 +11,22 @@ import {
 
 import { Button } from "@/components/ui/button"
 import { Orb } from "@/components/ui/orb"
+import { VoicePicker } from "@/components/ui/voice-picker"
 import { useVoices } from "@/api/hooks"
 import { ConversationClient, type ConvState } from "@/api/conversation-ws"
 import { useMicCapture } from "@/hooks/useMicCapture"
 import { selectedVoiceAtom } from "@/store/atoms"
+import { BACKEND_URL, API_KEY } from "@/api/client"
 import { cn } from "@/lib/utils"
 
 interface Turn {
   role: "user" | "assistant"
   text: string
   ts: number
+  /** For user turns: server-side turn idx (lets a `late` transcript find this row) */
+  turn?: number
+  /** For user turns: absolute URL to fetch the recording. */
+  audioUrl?: string
 }
 
 // Wait this long after the last voiced chunk before declaring end-of-utterance.
@@ -35,7 +41,9 @@ const CHUNK_MS = 64
 export default function CallPage() {
   const { t } = useTranslation()
   const { data: voices = [] } = useVoices()
-  const selectedVoice = useAtomValue(selectedVoiceAtom)
+  // Make the call page a first-class voice picker — user shouldn't have
+  // to leave for /library to switch the voice the agent speaks in.
+  const [selectedVoice, setSelectedVoice] = useAtom(selectedVoiceAtom)
   const voiceId = selectedVoice ?? voices[0]?.voice_id ?? "default"
 
   const [state, setState] = React.useState<ConvState>("idle")
@@ -114,8 +122,43 @@ export default function CallPage() {
     const client = new ConversationClient(
       {
         onState: setState,
-        onTranscript: (text) =>
-          setTurns((p) => [...p, { role: "user", text, ts: Date.now() }]),
+        onTranscript: (info) => {
+          // Resolve absolute URL for audio playback (proxied through Caddy
+          // in production, falls through Vite proxy in dev).
+          const fullUrl = info.audioUrl
+            ? buildAbsoluteUrl(info.audioUrl)
+            : undefined
+          setTurns((p) => {
+            // If this is a `late` transcript (background ASR), find the
+            // matching pending user bubble (same turn idx, empty text)
+            // and update it in-place — preserves chat order.
+            if (info.late && info.turn !== undefined) {
+              const idx = p.findIndex(
+                (t) => t.role === "user" && t.turn === info.turn
+              )
+              if (idx >= 0) {
+                const next = [...p]
+                next[idx] = {
+                  ...next[idx],
+                  text: info.text,
+                  audioUrl: fullUrl ?? next[idx].audioUrl,
+                }
+                return next
+              }
+            }
+            // Fresh user turn — append.
+            return [
+              ...p,
+              {
+                role: "user",
+                text: info.text,
+                ts: Date.now(),
+                turn: info.turn,
+                audioUrl: fullUrl,
+              },
+            ]
+          })
+        },
         onResponseText: (text) =>
           setTurns((p) => [...p, { role: "assistant", text, ts: Date.now() }]),
         onTurnDone: (info) =>
@@ -261,15 +304,23 @@ export default function CallPage() {
 
           {/* Controls */}
           {!connected ? (
-            <Button
-              size="lg"
-              onClick={start}
-              disabled={hasMic === false}
-              className="w-full"
-            >
-              <Mic className="me-2 size-5" />
-              {t("call.start")}
-            </Button>
+            <div className="flex flex-col gap-2">
+              {/* Pick the agent's voice without leaving the page. */}
+              <VoicePicker
+                voices={voices}
+                value={selectedVoice}
+                onValueChange={setSelectedVoice}
+              />
+              <Button
+                size="lg"
+                onClick={start}
+                disabled={hasMic === false}
+                className="w-full"
+              >
+                <Mic className="me-2 size-5" />
+                {t("call.start")}
+              </Button>
+            </div>
           ) : (
             <div className="grid grid-cols-3 gap-2">
               <Button
@@ -326,19 +377,46 @@ function ChatBubble({
     <div className={cn("flex flex-col", isUser ? "items-end" : "items-start")}>
       <div
         className={cn(
-          "max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed shadow-sm sm:max-w-[75%]",
+          "flex max-w-[85%] flex-col gap-2 rounded-2xl px-4 py-2.5 text-sm leading-relaxed shadow-sm sm:max-w-[75%]",
           isUser
             ? "rounded-br-sm bg-primary text-primary-foreground"
             : "rounded-bl-sm bg-card border"
         )}
       >
-        <span dir="auto">{turn.text}</span>
+        {/* User bubble: inline audio player above the transcript so the
+           user can play back exactly what was sent. */}
+        {isUser && turn.audioUrl && (
+          <audio
+            controls
+            preload="metadata"
+            src={turn.audioUrl}
+            className="w-full max-w-xs rounded-lg"
+            style={{ accentColor: "currentColor" }}
+          />
+        )}
+        <span dir="auto">{turn.text || (isUser ? "..." : "")}</span>
       </div>
       <span className="mt-1 px-1 text-[10px] text-muted-foreground">
         {isUser ? t("call.you") : t("call.assistant")} · {formatTime(turn.ts)}
       </span>
     </div>
   )
+}
+
+/**
+ * Build an absolute URL the browser can use to fetch a session asset.
+ * In dev it goes through Vite's /v1 proxy; in prod it goes through Caddy
+ * which already proxies /v1/* to the backend.
+ */
+function buildAbsoluteUrl(path: string): string {
+  if (/^https?:\/\//i.test(path)) return path
+  const origin = BACKEND_URL || `${window.location.protocol}//${window.location.host}`
+  const sep = path.includes("?") ? "&" : "?"
+  // Audio fetch is a normal HTTP GET — Caddy + auth dependency expects
+  // the api key as a header, but <audio> can't set headers, so we pass
+  // it as a query param too.
+  const auth = API_KEY ? `${sep}api_key=${encodeURIComponent(API_KEY)}` : ""
+  return `${origin}${path}${auth}`
 }
 
 function TypingBubble({ state }: { state: ConvState }) {
