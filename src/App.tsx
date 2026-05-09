@@ -7,6 +7,7 @@ import { Layout } from "@/components/layout"
 const LibraryPage = lazy(() => import("@/pages/library"))
 const ClonePage = lazy(() => import("@/pages/clone"))
 const TranscribePage = lazy(() => import("@/pages/transcribe"))
+const DialoguePage = lazy(() => import("@/pages/dialogue"))
 const CallPage = lazy(() => import("@/pages/call"))
 
 function PageLoader() {
@@ -26,6 +27,7 @@ export default function App() {
           <Route path="library" element={<LibraryPage />} />
           <Route path="clone" element={<ClonePage />} />
           <Route path="transcribe" element={<TranscribePage />} />
+          <Route path="dialogue" element={<DialoguePage />} />
           <Route path="call" element={<CallPage />} />
           <Route path="*" element={<Navigate to="/library" replace />} />
         </Route>

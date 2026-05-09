@@ -1,9 +1,10 @@
 import { API_KEY, BACKEND_URL } from "./client"
+import { createPCMPlayer, type PCMPlayer } from "@/lib/pcm-player"
 
 /**
  * Live conversation (S2S) client. Wraps a single WebSocket talking to
- * /v1/conversation/ws. Streams mic PCM up, plays back TTS PCM via the
- * provided AudioContext.
+ * /v1/conversation/ws. Streams mic PCM up, plays back TTS PCM via an
+ * AudioWorklet for sample-accurate gapless audio.
  */
 
 export type ConvState = "idle" | "listening" | "thinking" | "speaking"
@@ -21,19 +22,13 @@ export interface ConversationOptions {
   language?: string
 }
 
-interface AudioMeta {
-  sample_rate: number
-  format: string
-}
-
 export class ConversationClient {
   private ws: WebSocket | null = null
-  private audioCtx: AudioContext | null = null
-  private playbackTime = 0
-  private currentMeta: AudioMeta = { sample_rate: 24000, format: "pcm_s16le" }
+  private player: PCMPlayer | null = null
   private cbs: ConversationCallbacks
   private opts: Required<ConversationOptions>
   private state: ConvState = "idle"
+  private closedByCaller = false
 
   constructor(cbs: ConversationCallbacks, opts: ConversationOptions = {}) {
     this.cbs = cbs
@@ -59,8 +54,7 @@ export class ConversationClient {
     if (API_KEY) params.set("api_key", API_KEY)
     const url = origin.replace(/^http/, "ws") + `/v1/conversation/ws?${params.toString()}`
 
-    this.audioCtx = new AudioContext({ sampleRate: this.currentMeta.sample_rate })
-    if (this.audioCtx.state === "suspended") await this.audioCtx.resume()
+    this.player = await createPCMPlayer()
 
     return new Promise((resolve, reject) => {
       const ws = new WebSocket(url)
@@ -81,11 +75,17 @@ export class ConversationClient {
         }
       }
       ws.onerror = () => {
+        if (this.closedByCaller) return
         this.cbs.onError?.("websocket error")
         reject(new Error("websocket error"))
       }
       ws.onclose = (ev) => {
-        if (ev.code !== 1000 && ev.code !== 1005) {
+        if (
+          !this.closedByCaller &&
+          ev.code !== 1000 &&
+          ev.code !== 1005 &&
+          ev.code !== 1006
+        ) {
           this.cbs.onError?.(`closed: ${ev.code}`)
         }
         this.setState("idle")
@@ -109,12 +109,8 @@ export class ConversationClient {
         this.setState("speaking")
         break
       case "audio_meta":
-        this.currentMeta = {
-          sample_rate: Number(msg.sample_rate ?? 24000),
-          format: String(msg.format ?? "pcm_s16le"),
-        }
-        // playbackTime resets per turn — schedule from now
-        this.playbackTime = this.audioCtx?.currentTime ?? 0
+        // Server-emitted meta — currently informational. The PCM player
+        // is locked to 24 kHz / pcm_s16le which the backend always uses.
         break
       case "turn_done":
         this.cbs.onTurnDone?.({
@@ -122,8 +118,10 @@ export class ConversationClient {
           total_ms: Number(msg.total_ms ?? 0),
           chunks: Number(msg.chunks ?? 0),
         })
-        // wait for the queued audio to finish before flipping state
-        setTimeout(() => this.setState("idle"), 300)
+        // Tell the player no more audio is coming for this turn; once the
+        // worklet drains its queue we know playback finished.
+        this.player?.flush()
+        void this.player?.waitForDrain().then(() => this.setState("idle"))
         break
       case "error":
         this.cbs.onError?.(String(msg.message ?? "error"))
@@ -132,21 +130,7 @@ export class ConversationClient {
   }
 
   private enqueuePCM(buf: ArrayBuffer) {
-    const ctx = this.audioCtx
-    if (!ctx) return
-    // PCM16LE → Float32
-    const i16 = new Int16Array(buf)
-    if (i16.length === 0) return
-    const f32 = new Float32Array(i16.length)
-    for (let i = 0; i < i16.length; i++) f32[i] = i16[i]! / 32768
-    const audioBuffer = ctx.createBuffer(1, f32.length, this.currentMeta.sample_rate)
-    audioBuffer.copyToChannel(f32, 0)
-    const src = ctx.createBufferSource()
-    src.buffer = audioBuffer
-    src.connect(ctx.destination)
-    const startAt = Math.max(this.playbackTime, ctx.currentTime + 0.02)
-    src.start(startAt)
-    this.playbackTime = startAt + audioBuffer.duration
+    this.player?.pushPCM16LE(buf)
   }
 
   /** Send a chunk of mic PCM16LE @ 16 kHz. */
@@ -180,6 +164,8 @@ export class ConversationClient {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify({ type: "interrupt" }))
     }
+    // Drop any audio already buffered locally so the user gets immediate silence.
+    this.player?.reset()
   }
 
   /** Track that the mic just opened — UI hint only. */
@@ -188,6 +174,7 @@ export class ConversationClient {
   }
 
   close() {
+    this.closedByCaller = true
     try {
       this.ws?.close()
     } catch {
@@ -195,11 +182,11 @@ export class ConversationClient {
     }
     this.ws = null
     try {
-      void this.audioCtx?.close()
+      void this.player?.close()
     } catch {
       // ignore
     }
-    this.audioCtx = null
+    this.player = null
     this.setState("idle")
   }
 }

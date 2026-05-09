@@ -8,6 +8,7 @@ import type {
   TTSRequest,
   TranscribeResponse,
   Voice,
+  VoiceSettings,
   VoicesListResponse,
 } from "@/types/api"
 
@@ -102,19 +103,49 @@ export function useTTS() {
   })
 }
 
+export interface DialogueLineInput {
+  speaker: number
+  text: string
+}
+
+export interface DialogueRequestInput {
+  speakers: string[]
+  lines: DialogueLineInput[]
+  voice_settings?: VoiceSettings
+}
+
+export function useDialogue() {
+  return useMutation({
+    mutationFn: async (req: DialogueRequestInput): Promise<Blob> => {
+      const res = await api.post("/v1/dialogue", { ...req, output_format: "wav" }, {
+        responseType: "blob",
+      })
+      return res.data
+    },
+  })
+}
+
 export interface TranscribeInput {
   file: File | Blob
   language?: string
   detailed?: boolean
+  /** Comma-separated domain names/terms to bias recognition (e.g. "أرامكو, STC, Kubernetes"). */
+  hotwords?: string
 }
 
 /** Speech-to-text. Returns plain text by default; pass `detailed=true` for segments + diarization. */
 export function useTranscribe() {
   return useMutation({
-    mutationFn: async ({ file, language = "ar", detailed = false }: TranscribeInput) => {
+    mutationFn: async ({
+      file,
+      language = "ar",
+      detailed = false,
+      hotwords,
+    }: TranscribeInput) => {
       const fd = new FormData()
       fd.append("file", file)
       fd.append("language", language)
+      if (hotwords && hotwords.trim()) fd.append("hotwords", hotwords.trim())
       const path = detailed ? "/v1/transcribe" : "/v1/speech-to-text"
       const res = await api.post<STTResponse | TranscribeResponse>(path, fd, {
         headers: { "Content-Type": "multipart/form-data" },

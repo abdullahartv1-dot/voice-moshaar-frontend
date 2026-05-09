@@ -33,6 +33,8 @@ export function startTTSStream(
 
   const ws = new WebSocket(wsUrl)
   ws.binaryType = "arraybuffer"
+  let gotDone = false
+  let closedByCaller = false
 
   ws.onopen = () => {
     ws.send(JSON.stringify({ text, voice_settings: settings ?? {} }))
@@ -43,8 +45,10 @@ export function startTTSStream(
         const msg = JSON.parse(ev.data)
         if (msg.type === "meta") cbs.onMeta?.(msg)
         else if (msg.type === "ttfa") cbs.onTtfa?.(msg.ms)
-        else if (msg.type === "done") cbs.onDone?.(msg)
-        else if (msg.type === "error") cbs.onError?.(msg.message)
+        else if (msg.type === "done") {
+          gotDone = true
+          cbs.onDone?.(msg)
+        } else if (msg.type === "error") cbs.onError?.(msg.message)
       } catch {
         // ignore
       }
@@ -52,9 +56,20 @@ export function startTTSStream(
       cbs.onChunk(ev.data as ArrayBuffer)
     }
   }
-  ws.onerror = () => cbs.onError?.("websocket error")
+  ws.onerror = () => {
+    // Only surface as error if we haven't completed normally already.
+    if (!gotDone && !closedByCaller) cbs.onError?.("websocket error")
+  }
   ws.onclose = (ev) => {
+    // 1006 (abnormal) after a normal "done" frame is just uvicorn closing
+    // without a server-side close frame — not an error from the user's POV.
+    if (gotDone || closedByCaller) return
     if (ev.code !== 1000 && ev.code !== 1005) cbs.onError?.(`closed: ${ev.code}`)
   }
-  return { close: () => ws.close() }
+  return {
+    close: () => {
+      closedByCaller = true
+      ws.close()
+    },
+  }
 }

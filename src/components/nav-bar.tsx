@@ -12,6 +12,7 @@ const navItems = [
   { to: "/library", key: "library" as const },
   { to: "/clone", key: "clone" as const },
   { to: "/transcribe", key: "transcribe" as const },
+  { to: "/dialogue", key: "dialogue" as const },
   { to: "/call", key: "call" as const },
 ]
 

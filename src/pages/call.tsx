@@ -35,30 +35,26 @@ export default function CallPage() {
   const silenceTimerRef = React.useRef<number | null>(null)
 
   const handleMicChunk = React.useCallback((pcm: ArrayBuffer) => {
-    if (!clientRef.current) return
-    // Send to server
-    clientRef.current.sendAudioChunk(pcm)
-
-    // Simple energy-based VAD client-side: detect when audio goes quiet.
-    const i16 = new Int16Array(pcm)
-    let sum = 0
-    for (let i = 0; i < i16.length; i++) sum += Math.abs(i16[i]!)
-    const rms = sum / i16.length / 32768
-    const speaking = rms > 0.012
-    if (speaking) {
-      lastVoiceTsRef.current = performance.now()
-    }
-    // If we had voice within the last second and now we've been silent:
+    clientRef.current?.sendAudioChunk(pcm)
+    // End-of-utterance: if we last heard speech > SILENCE_THRESHOLD_MS ago,
+    // tell the server to start the ASR→LLM→TTS pipeline.
     if (
       lastVoiceTsRef.current > 0 &&
       performance.now() - lastVoiceTsRef.current > SILENCE_THRESHOLD_MS
     ) {
       lastVoiceTsRef.current = 0
-      clientRef.current.endOfUtterance()
+      clientRef.current?.endOfUtterance()
     }
   }, [])
 
-  const mic = useMicCapture(handleMicChunk)
+  const handleSpeaking = React.useCallback((speaking: boolean) => {
+    if (speaking) lastVoiceTsRef.current = performance.now()
+  }, [])
+
+  const mic = useMicCapture({
+    onChunk: handleMicChunk,
+    onSpeakingChange: handleSpeaking,
+  })
 
   const start = async () => {
     setError(null)

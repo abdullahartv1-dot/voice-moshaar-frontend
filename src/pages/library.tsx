@@ -1,7 +1,7 @@
 import * as React from "react"
 import { useAtom } from "jotai"
 import { useTranslation } from "react-i18next"
-import { Loader2, Pause, Play, Trash2, Wand2 } from "lucide-react"
+import { Loader2, Square, Trash2, Wand2 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
@@ -9,7 +9,6 @@ import { Label } from "@/components/ui/label"
 import { Slider } from "@/components/ui/slider"
 import {
   AudioPlayerProvider,
-  useAudioPlayer,
 } from "@/components/ui/audio-player"
 import { VoicePicker } from "@/components/ui/voice-picker"
 import { Orb } from "@/components/ui/orb"
@@ -22,7 +21,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 
-import { useDeleteVoice, useTTS, useVoices } from "@/api/hooks"
+import { useDeleteVoice, useVoices } from "@/api/hooks"
+import { useStreamingTTS } from "@/hooks/useStreamingTTS"
 import { selectedVoiceAtom } from "@/store/atoms"
 import { cn } from "@/lib/utils"
 
@@ -41,12 +41,10 @@ function LibraryInner() {
   const [text, setText] = React.useState("")
   const [cfg, setCfg] = React.useState(1.8)
   const [steps, setSteps] = React.useState(15)
-  const [generatedUrl, setGeneratedUrl] = React.useState<string | null>(null)
   const [pendingDelete, setPendingDelete] = React.useState<string | null>(null)
 
-  const tts = useTTS()
   const del = useDeleteVoice()
-  const player = useAudioPlayer()
+  const tts = useStreamingTTS()
 
   // Make sure a voice is selected once data loads.
   React.useEffect(() => {
@@ -56,34 +54,10 @@ function LibraryInner() {
     }
   }, [voices, selectedId, setSelectedId])
 
-  // Free the previous blob when we replace it.
-  React.useEffect(() => {
-    return () => {
-      if (generatedUrl) URL.revokeObjectURL(generatedUrl)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [generatedUrl])
-
   const handleGenerate = async () => {
     if (!selectedId || !text.trim()) return
-    try {
-      const blob = await tts.mutateAsync({
-        voiceId: selectedId,
-        req: {
-          text,
-          voice_settings: { cfg_scale: cfg, diffusion_steps: steps },
-        },
-      })
-      const url = URL.createObjectURL(blob)
-      setGeneratedUrl(url)
-      player.play({ id: "generated", src: url })
-    } catch (e) {
-      console.error(e)
-    }
+    await tts.speak(text, selectedId, { cfg_scale: cfg, diffusion_steps: steps })
   }
-
-  const generatedActive = player.isItemActive("generated")
-  const isPlayingGenerated = generatedActive && player.isPlaying
 
   return (
     <div className="space-y-8">
@@ -200,16 +174,21 @@ function LibraryInner() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Button
               onClick={handleGenerate}
-              disabled={!selectedId || !text.trim() || tts.isPending}
+              disabled={!selectedId || !text.trim() || tts.isLoading || tts.isPlaying}
               className="min-w-[140px]"
             >
-              {tts.isPending ? (
+              {tts.isLoading ? (
                 <>
                   <Loader2 className="me-2 size-4 animate-spin" />
                   {t("library.tts_generating")}
+                </>
+              ) : tts.isPlaying ? (
+                <>
+                  <Loader2 className="me-2 size-4 animate-spin" />
+                  {t("library.tts_play")}
                 </>
               ) : (
                 <>
@@ -219,32 +198,22 @@ function LibraryInner() {
               )}
             </Button>
 
-            {generatedUrl && (
-              <Button
-                variant="outline"
-                onClick={() => {
-                  if (isPlayingGenerated) player.pause()
-                  else player.play({ id: "generated", src: generatedUrl })
-                }}
-              >
-                {isPlayingGenerated ? (
-                  <>
-                    <Pause className="me-2 size-4" />
-                    {t("library.tts_pause")}
-                  </>
-                ) : (
-                  <>
-                    <Play className="me-2 size-4" />
-                    {t("library.tts_play")}
-                  </>
-                )}
+            {(tts.isLoading || tts.isPlaying) && (
+              <Button variant="outline" onClick={tts.stop}>
+                <Square className="me-2 size-4" />
+                {t("common.cancel")}
               </Button>
+            )}
+
+            {tts.ttfaMs !== null && (
+              <span className="text-xs tabular-nums text-muted-foreground">
+                TTFA: {tts.ttfaMs} ms
+                {tts.totalMs !== null ? ` · إجمالي: ${tts.totalMs} ms` : ""}
+              </span>
             )}
           </div>
 
-          {tts.error && (
-            <p className="text-sm text-destructive">{(tts.error as Error).message}</p>
-          )}
+          {tts.error && <p className="text-sm text-destructive">{tts.error}</p>}
         </div>
       </section>
 

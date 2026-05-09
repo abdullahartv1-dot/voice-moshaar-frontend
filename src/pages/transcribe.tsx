@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next"
 import { Loader2, Upload, Users } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useTranscribe } from "@/api/hooks"
 import type { TranscribeResponse } from "@/types/api"
@@ -17,6 +18,7 @@ export default function TranscribePage() {
   const [audioUrl, setAudioUrl] = React.useState<string | null>(null)
   const [result, setResult] = React.useState<TranscribeResponse | null>(null)
   const [dragOver, setDragOver] = React.useState(false)
+  const [hotwords, setHotwords] = React.useState("")
 
   const audioRef = React.useRef<HTMLAudioElement | null>(null)
 
@@ -34,6 +36,7 @@ export default function TranscribePage() {
       file,
       language: "ar",
       detailed: true,
+      hotwords: hotwords.trim() || undefined,
     })) as TranscribeResponse
     setResult(data)
   }
@@ -86,6 +89,18 @@ export default function TranscribePage() {
         </label>
 
         {audioUrl && <audio ref={audioRef} src={audioUrl} controls className="w-full" />}
+
+        <div className="space-y-2">
+          <Label htmlFor="hotwords">{t("transcribe.hotwords")}</Label>
+          <Input
+            id="hotwords"
+            dir="auto"
+            value={hotwords}
+            onChange={(e) => setHotwords(e.target.value)}
+            placeholder={t("transcribe.hotwords_placeholder")}
+          />
+          <p className="text-xs text-muted-foreground">{t("transcribe.hotwords_hint")}</p>
+        </div>
 
         <div className="flex items-center gap-3">
           <Button onClick={onSubmit} disabled={!file || transcribe.isPending}>
