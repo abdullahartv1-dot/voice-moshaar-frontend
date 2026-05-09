@@ -24,7 +24,9 @@ interface Turn {
 }
 
 // Wait this long after the last voiced chunk before declaring end-of-utterance.
-const SILENCE_THRESHOLD_MS = 1800
+// 1.2 s is comfortable for natural sentence-pacing now that the per-chunk
+// VAD fix means the deadline keeps refreshing while you're still speaking.
+const SILENCE_THRESHOLD_MS = 1200
 // Only fire EOU once the user has said at least this much in this turn —
 // guards against single-frame mic noise creating empty turns.
 const MIN_VOICED_MS = 300
