@@ -13,8 +13,20 @@ import type { VoiceSettings } from "@/types/api"
  *   - stop(): cancel and close
  *   - isPlaying, isLoading, ttfaMs, totalMs: live status for UI
  */
+export interface SpeakOptions {
+  /** When true, server runs the text through Qwen first to add Arabic
+   * diacritics — fixes mispronunciations on bare text. Adds ~300-1500ms
+   * before audio starts. */
+  autoDiacritize?: boolean
+}
+
 export interface StreamingTTS {
-  speak: (text: string, voiceId: string, settings?: VoiceSettings) => Promise<void>
+  speak: (
+    text: string,
+    voiceId: string,
+    settings?: VoiceSettings,
+    opts?: SpeakOptions
+  ) => Promise<void>
   stop: () => void
   isPlaying: boolean
   isLoading: boolean
@@ -48,7 +60,7 @@ export function useStreamingTTS(): StreamingTTS {
   }, [])
 
   const speak = React.useCallback(
-    async (text: string, voiceId: string, settings?: VoiceSettings) => {
+    async (text: string, voiceId: string, settings?: VoiceSettings, opts?: SpeakOptions) => {
       stop()
       const player = await ensurePlayer()
       player.reset()
@@ -81,7 +93,8 @@ export function useStreamingTTS(): StreamingTTS {
             setPlaying(false)
           },
         },
-        settings
+        settings,
+        opts?.autoDiacritize ?? false,
       )
     },
     [ensurePlayer, stop]

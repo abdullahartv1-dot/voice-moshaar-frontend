@@ -28,7 +28,9 @@
     "tts_generating": "Generating...",
     "tts_play": "Play",
     "tts_pause": "Pause",
-    "duration_s": "{{seconds}}s"
+    "duration_s": "{{seconds}}s",
+    "auto_diacritize": "Auto-diacritize",
+    "auto_diacritize_hint": "Adds Arabic diacritics before TTS for better pronunciation (~1s extra)"
   },
   "clone": {
     "title": "Clone a New Voice",

@@ -28,7 +28,9 @@
     "tts_generating": "جارٍ التوليد...",
     "tts_play": "تشغيل",
     "tts_pause": "إيقاف",
-    "duration_s": "{{seconds}} ثانية"
+    "duration_s": "{{seconds}} ثانية",
+    "auto_diacritize": "تشكيل تلقائي",
+    "auto_diacritize_hint": "يضيف الحركات قبل التحويل لتحسين النطق (يستغرق ثانية إضافية)"
   },
   "clone": {
     "title": "استنساخ صوت جديد",

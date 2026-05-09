@@ -41,6 +41,7 @@ function LibraryInner() {
   const [text, setText] = React.useState("")
   const [cfg, setCfg] = React.useState(1.8)
   const [steps, setSteps] = React.useState(15)
+  const [autoDiacritize, setAutoDiacritize] = React.useState(false)
   const [pendingDelete, setPendingDelete] = React.useState<string | null>(null)
 
   const del = useDeleteVoice()
@@ -56,7 +57,12 @@ function LibraryInner() {
 
   const handleGenerate = async () => {
     if (!selectedId || !text.trim()) return
-    await tts.speak(text, selectedId, { cfg_scale: cfg, diffusion_steps: steps })
+    await tts.speak(
+      text,
+      selectedId,
+      { cfg_scale: cfg, diffusion_steps: steps },
+      { autoDiacritize },
+    )
   }
 
   return (
@@ -173,6 +179,21 @@ function LibraryInner() {
               />
             </div>
           </div>
+
+          <label className="flex items-start gap-3 rounded-md border border-border/60 bg-background/40 p-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={autoDiacritize}
+              onChange={(e) => setAutoDiacritize(e.target.checked)}
+              className="mt-0.5 size-4 accent-primary"
+            />
+            <span className="flex flex-col gap-0.5">
+              <span className="text-sm font-medium">{t("library.auto_diacritize")}</span>
+              <span className="text-xs text-muted-foreground">
+                {t("library.auto_diacritize_hint")}
+              </span>
+            </span>
+          </label>
 
           <div className="flex flex-wrap items-center gap-2">
             <Button

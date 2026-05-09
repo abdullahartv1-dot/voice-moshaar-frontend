@@ -21,7 +21,8 @@ export function startTTSStream(
   voiceId: string,
   text: string,
   cbs: TTSStreamCallbacks,
-  settings?: VoiceSettings
+  settings?: VoiceSettings,
+  autoDiacritize: boolean = false
 ): TTSStreamHandle {
   // Resolve absolute URL even when running through Vite dev proxy.
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:"
@@ -37,7 +38,13 @@ export function startTTSStream(
   let closedByCaller = false
 
   ws.onopen = () => {
-    ws.send(JSON.stringify({ text, voice_settings: settings ?? {} }))
+    ws.send(
+      JSON.stringify({
+        text,
+        voice_settings: settings ?? {},
+        auto_diacritize: autoDiacritize,
+      })
+    )
   }
   ws.onmessage = (ev) => {
     if (typeof ev.data === "string") {
