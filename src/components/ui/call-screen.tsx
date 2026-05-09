@@ -147,7 +147,12 @@ function OrbView(props: CallScreenProps) {
 
   return (
     <div
-      className="-mx-4 -my-6 flex h-[calc(100svh-3.5rem)] flex-col items-center justify-between bg-gradient-to-b from-background via-background to-background/90 sm:-mx-6"
+      // overflow-hidden + relative is critical: the pulse rings around
+      // the orb scale up to 220 % and the listening hover halo extends
+      // beyond the orb's bounds. Without clipping, those visual layers
+      // push the page horizontally / vertically and the layout looks
+      // like it's "drifting" sideways during the call.
+      className="relative -mx-4 -my-6 flex h-[calc(100svh-3.5rem)] flex-col items-center justify-between overflow-hidden bg-gradient-to-b from-background via-background to-background/90 sm:-mx-6"
       dir="rtl"
     >
       {/* Top bar — voice info + elapsed */}
@@ -174,8 +179,10 @@ function OrbView(props: CallScreenProps) {
         </motion.div>
       </div>
 
-      {/* Centre — the orb. Clickable when idle to start the call. */}
-      <div className="relative flex flex-1 items-center justify-center">
+      {/* Centre — the orb. Clickable when idle to start the call.
+         The wrapper is `overflow-hidden` so the listening pulse rings
+         (which scale to 1.6×–2.2×) can't push the page sideways. */}
+      <div className="relative flex w-full flex-1 items-center justify-center overflow-hidden">
         <motion.div
           className="relative"
           initial={{ opacity: 0, scale: 0.8 }}
