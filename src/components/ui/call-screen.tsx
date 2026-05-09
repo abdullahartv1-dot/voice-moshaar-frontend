@@ -41,6 +41,7 @@ import {
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { SpeakingVisualizer } from "@/components/ui/speaking-visualizer"
 import { VoicePicker } from "@/components/ui/voice-picker"
 import { VoicePoweredOrb, type OrbState } from "@/components/ui/voice-powered-orb"
 import type { ConvState } from "@/api/conversation-ws"
@@ -213,7 +214,12 @@ function OrbView(props: CallScreenProps) {
             )}
           </AnimatePresence>
 
-          {/* Orb — clickable when idle to start the call. */}
+          {/* Orb — clickable when idle to start the call. We split the
+             button (which clips its WebGL canvas) from the radial
+             visualiser overlay (which needs to extend BEYOND the orb's
+             edge to draw bars in the surrounding space). The visualiser
+             sits at the same centre but with `inset-[-...]` so its
+             bars can radiate outward past the orb's circle. */}
           <motion.button
             type="button"
             onClick={!isActive ? onStartTap : undefined}
@@ -226,6 +232,20 @@ function OrbView(props: CallScreenProps) {
             )}
             whileHover={!isActive && hasMic !== false ? { scale: 1.04 } : undefined}
             whileTap={!isActive && hasMic !== false ? { scale: 0.96 } : undefined}
+            // Subtle "breathing" scale while AI is speaking — combined
+            // with the radial bars overlay, conveys "this thing is
+            // alive and producing sound" much more clearly than a hue
+            // change alone.
+            animate={
+              isActive && state === "speaking"
+                ? { scale: [1.0, 1.04, 1.0] }
+                : { scale: 1.0 }
+            }
+            transition={
+              isActive && state === "speaking"
+                ? { duration: 1.4, repeat: Infinity, ease: "easeInOut" }
+                : { duration: 0.3 }
+            }
             aria-label={isActive ? "أثناء المكالمة" : "اضغط لبدء المكالمة"}
           >
             <VoicePoweredOrb
@@ -249,6 +269,17 @@ function OrbView(props: CallScreenProps) {
               )}
             </AnimatePresence>
           </motion.button>
+
+          {/* Radial audio bars — only visible while AI is speaking. We
+             layer this OUTSIDE the orb's overflow-hidden button so the
+             bars can extend beyond the orb's circle into the
+             surrounding space, like a frequency spectrum visualiser
+             wrapped around a circle. The container has the same size
+             as the orb so the bars' `translateY(-52%)` lands them just
+             past the orb's edge. */}
+          <div className="pointer-events-none absolute inset-0 size-64 sm:size-80">
+            <SpeakingVisualizer active={isActive && state === "speaking"} />
+          </div>
         </motion.div>
 
         {/* State label below the orb (only during active call) */}
@@ -508,11 +539,18 @@ function ChatBubble({
   formatTime: (ts: number) => string
 }) {
   const isUser = turn.role === "user"
+  const hasAudio = isUser && !!turn.audioUrl
   return (
     <div className={cn("flex flex-col", isUser ? "items-end" : "items-start")}>
       <div
         className={cn(
-          "flex max-w-[85%] flex-col gap-2 rounded-2xl px-4 py-2.5 text-sm leading-relaxed shadow-sm sm:max-w-[75%]",
+          "flex flex-col gap-2 rounded-2xl px-4 py-2.5 text-sm leading-relaxed shadow-sm",
+          // Wider when there's an audio player so the scrubber + time
+          // labels are usable. Without this the bubble shrinks to fit
+          // a 2-word transcript and the player becomes unplayable.
+          hasAudio
+            ? "min-w-[280px] max-w-[420px] sm:min-w-[320px]"
+            : "max-w-[85%] sm:max-w-[75%]",
           isUser
             ? "rounded-br-sm bg-primary text-primary-foreground"
             : "rounded-bl-sm border bg-card",
@@ -523,7 +561,10 @@ function ChatBubble({
             controls
             preload="metadata"
             src={turn.audioUrl}
-            className="w-full max-w-xs rounded-lg"
+            // Independent min/max so the player itself stays usable
+            // even when the bubble layout decides otherwise (e.g. on
+            // very narrow phones where the bubble can't grow further).
+            className="w-full min-w-[260px] max-w-[380px] rounded-lg"
             style={{ accentColor: "currentColor" }}
           />
         )}
