@@ -29,10 +29,35 @@ export default function CallPage() {
   const [error, setError] = React.useState<string | null>(null)
   const [turns, setTurns] = React.useState<Turn[]>([])
   const [stats, setStats] = React.useState<{ ttfa_ms: number; total_ms: number } | null>(null)
+  const [hasMic, setHasMic] = React.useState<boolean | null>(null)
 
   const clientRef = React.useRef<ConversationClient | null>(null)
   const lastVoiceTsRef = React.useRef<number>(0)
   const silenceTimerRef = React.useRef<number | null>(null)
+
+  // Pre-flight check: does this device even have an audio input?
+  // We do it once on mount so the user sees the situation before they
+  // click "ابدأ المكالمة" — saves a confusing permission prompt.
+  React.useEffect(() => {
+    let cancelled = false
+    if (!navigator.mediaDevices?.enumerateDevices) {
+      setHasMic(false)
+      return
+    }
+    navigator.mediaDevices
+      .enumerateDevices()
+      .then((devices) => {
+        if (cancelled) return
+        const hasAudioInput = devices.some((d) => d.kind === "audioinput")
+        setHasMic(hasAudioInput)
+      })
+      .catch(() => {
+        if (!cancelled) setHasMic(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const handleMicChunk = React.useCallback((pcm: ArrayBuffer) => {
     clientRef.current?.sendAudioChunk(pcm)
@@ -59,6 +84,16 @@ export default function CallPage() {
   const start = async () => {
     setError(null)
     setTurns([])
+
+    // Try to open the mic FIRST — it's the most likely failure point and
+    // the error message is more helpful than a generic WS failure.
+    try {
+      await mic.start()
+    } catch (e) {
+      setError((e as Error).message)
+      return
+    }
+
     const client = new ConversationClient(
       {
         onState: setState,
@@ -73,11 +108,11 @@ export default function CallPage() {
       await client.connect()
       clientRef.current = client
       setConnected(true)
-      await mic.start()
       client.startListening()
     } catch (e) {
       setError((e as Error).message)
       client.close()
+      mic.stop()
     }
   }
 
@@ -167,10 +202,26 @@ export default function CallPage() {
       )}
 
       {!connected ? (
-        <Button size="lg" onClick={start} className="min-w-[180px]">
-          <Mic className="me-2 size-4" />
-          {t("call.start")}
-        </Button>
+        <div className="flex flex-col items-center gap-3">
+          {hasMic === false && (
+            <div className="flex max-w-md items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400">
+              <AlertCircle className="mt-0.5 size-4 shrink-0" />
+              <div>
+                لا يوجد ميكروفون متصل بهذا الجهاز. المكالمة المباشرة تتطلب جهازاً
+                فيه ميكروفون. افتح الصفحة من جوالك أو لابتوبك.
+              </div>
+            </div>
+          )}
+          <Button
+            size="lg"
+            onClick={start}
+            disabled={hasMic === false}
+            className="min-w-[180px]"
+          >
+            <Mic className="me-2 size-4" />
+            {t("call.start")}
+          </Button>
+        </div>
       ) : (
         <div className="flex items-center gap-3">
           <Button

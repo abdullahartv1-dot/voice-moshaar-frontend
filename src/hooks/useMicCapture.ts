@@ -39,14 +39,41 @@ export function useMicCapture(opts: MicCaptureOptions): MicCapture {
 
   const start = React.useCallback(async () => {
     if (streamRef.current) return
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-        channelCount: 1,
-      },
-    })
+    // First try with our preferred constraints. If the browser can't
+    // satisfy them (e.g. no mono input on this device), retry with
+    // `audio: true` — any audio device the OS exposes.
+    let stream: MediaStream
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          channelCount: 1,
+        },
+      })
+    } catch (err) {
+      const e = err as DOMException
+      if (e.name === "OverconstrainedError" || e.name === "ConstraintNotSatisfiedError") {
+        // Retry with the most permissive constraint
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      } else if (e.name === "NotFoundError" || e.name === "DevicesNotFoundError") {
+        throw new Error(
+          "لا يوجد ميكروفون متصل بهذا الجهاز. المكالمة المباشرة تتطلب جهازاً فيه ميكروفون. " +
+            "افتح الصفحة من جهاز آخر (لابتوب / جوال) متصل بنفس الشبكة."
+        )
+      } else if (e.name === "NotAllowedError" || e.name === "PermissionDeniedError") {
+        throw new Error(
+          "تم رفض الميكروفون. اسمح للموقع بالوصول للميكروفون من إعدادات المتصفح ثم أعد المحاولة."
+        )
+      } else if (e.name === "NotReadableError") {
+        throw new Error(
+          "الميكروفون قيد الاستخدام من تطبيق آخر. أغلق التطبيقات الأخرى وحاول مجدداً."
+        )
+      } else {
+        throw new Error(`تعذّر فتح الميكروفون: ${e.message || e.name}`)
+      }
+    }
     streamRef.current = stream
 
     const ctx = new AudioContext()
