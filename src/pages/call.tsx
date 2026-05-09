@@ -1,7 +1,13 @@
 import * as React from "react"
 import { useAtomValue } from "jotai"
 import { useTranslation } from "react-i18next"
-import { Mic, MicOff, PhoneOff, RotateCcw, AlertCircle } from "lucide-react"
+import {
+  AlertCircle,
+  Mic,
+  MicOff,
+  PhoneOff,
+  RotateCcw,
+} from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Orb } from "@/components/ui/orb"
@@ -14,18 +20,15 @@ import { cn } from "@/lib/utils"
 interface Turn {
   role: "user" | "assistant"
   text: string
+  ts: number
 }
 
-// Wait this long after the LAST voiced chunk before declaring end-of-utterance.
-// Natural pauses in Arabic narration sit around 0.5-1 s, so anything below
-// that prematurely cuts the user off mid-thought. 1.8 s is patient enough
-// for "uh, ..." mid-sentence pauses and short exhales without making the
-// turnaround feel sluggish.
+// Wait this long after the last voiced chunk before declaring end-of-utterance.
 const SILENCE_THRESHOLD_MS = 1800
-// Don't fire EOU until the user has actually said *something* for at least
-// this long total — protects against mic clicks / single-frame noise spikes
-// triggering an empty utterance.
+// Only fire EOU once the user has said at least this much in this turn —
+// guards against single-frame mic noise creating empty turns.
 const MIN_VOICED_MS = 300
+const CHUNK_MS = 64
 
 export default function CallPage() {
   const { t } = useTranslation()
@@ -41,19 +44,11 @@ export default function CallPage() {
   const [hasMic, setHasMic] = React.useState<boolean | null>(null)
 
   const clientRef = React.useRef<ConversationClient | null>(null)
-  // When did the user last produce a voiced frame? Updated every chunk
-  // (not just at speech-start), so a long sentence keeps refreshing it.
   const lastVoiceTsRef = React.useRef<number>(0)
-  // Total cumulative voiced time in the current turn — used to ignore
-  // single-frame mic noise that isn't actually speech.
   const voicedMsRef = React.useRef<number>(0)
-  const silenceTimerRef = React.useRef<number | null>(null)
-  // 64 ms is the worklet's chunk size at 16 kHz. Used to credit voiced time.
-  const CHUNK_MS = 64
+  const scrollRef = React.useRef<HTMLDivElement | null>(null)
 
-  // Pre-flight check: does this device even have an audio input?
-  // We do it once on mount so the user sees the situation before they
-  // click "ابدأ المكالمة" — saves a confusing permission prompt.
+  // Pre-flight mic check
   React.useEffect(() => {
     let cancelled = false
     if (!navigator.mediaDevices?.enumerateDevices) {
@@ -64,71 +59,65 @@ export default function CallPage() {
       .enumerateDevices()
       .then((devices) => {
         if (cancelled) return
-        const hasAudioInput = devices.some((d) => d.kind === "audioinput")
-        setHasMic(hasAudioInput)
+        setHasMic(devices.some((d) => d.kind === "audioinput"))
       })
-      .catch(() => {
-        if (!cancelled) setHasMic(null)
-      })
+      .catch(() => !cancelled && setHasMic(null))
     return () => {
       cancelled = true
     }
   }, [])
 
-  const handleMicChunk = React.useCallback((pcm: ArrayBuffer, speaking: boolean) => {
-    clientRef.current?.sendAudioChunk(pcm)
-    const now = performance.now()
-    // Refresh the "last voiced" timestamp on EVERY chunk that contains
-    // speech — not just transitions. This is the fix for "agent cuts the
-    // user off mid-sentence": previously lastVoiceTs was only set at
-    // speech-start, so SILENCE_THRESHOLD ran out while the user was still
-    // talking continuously.
-    if (speaking) {
-      lastVoiceTsRef.current = now
-      voicedMsRef.current += CHUNK_MS
-    }
-    // Only treat silence as end-of-utterance after enough voiced content
-    // to be a real turn (filters out a single noise-spike "blip").
-    if (
-      lastVoiceTsRef.current > 0 &&
-      voicedMsRef.current >= MIN_VOICED_MS &&
-      now - lastVoiceTsRef.current > SILENCE_THRESHOLD_MS
-    ) {
-      lastVoiceTsRef.current = 0
-      voicedMsRef.current = 0
-      clientRef.current?.endOfUtterance()
-    }
-  }, [])
+  // Auto-scroll to bottom whenever a new turn lands.
+  React.useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" })
+  }, [turns.length])
 
-  // Transition events drive UI hints (the orb), not the EOU logic above.
-  const handleSpeaking = React.useCallback((_speaking: boolean) => {
-    // intentionally empty for now — the per-chunk path handles EOU
-  }, [])
+  const handleMicChunk = React.useCallback(
+    (pcm: ArrayBuffer, speaking: boolean) => {
+      clientRef.current?.sendAudioChunk(pcm)
+      const now = performance.now()
+      if (speaking) {
+        lastVoiceTsRef.current = now
+        voicedMsRef.current += CHUNK_MS
+      }
+      if (
+        lastVoiceTsRef.current > 0 &&
+        voicedMsRef.current >= MIN_VOICED_MS &&
+        now - lastVoiceTsRef.current > SILENCE_THRESHOLD_MS
+      ) {
+        lastVoiceTsRef.current = 0
+        voicedMsRef.current = 0
+        clientRef.current?.endOfUtterance()
+      }
+    },
+    []
+  )
 
   const mic = useMicCapture({
     onChunk: handleMicChunk,
-    onSpeakingChange: handleSpeaking,
+    onSpeakingChange: () => undefined,
   })
 
   const start = async () => {
     setError(null)
     setTurns([])
-
-    // Try to open the mic FIRST — it's the most likely failure point and
-    // the error message is more helpful than a generic WS failure.
     try {
       await mic.start()
     } catch (e) {
       setError((e as Error).message)
       return
     }
-
     const client = new ConversationClient(
       {
         onState: setState,
-        onTranscript: (text) => setTurns((p) => [...p, { role: "user", text }]),
-        onResponseText: (text) => setTurns((p) => [...p, { role: "assistant", text }]),
-        onTurnDone: (info) => setStats({ ttfa_ms: info.ttfa_ms, total_ms: info.total_ms }),
+        onTranscript: (text) =>
+          setTurns((p) => [...p, { role: "user", text, ts: Date.now() }]),
+        onResponseText: (text) =>
+          setTurns((p) => [...p, { role: "assistant", text, ts: Date.now() }]),
+        onTurnDone: (info) =>
+          setStats({ ttfa_ms: info.ttfa_ms, total_ms: info.total_ms }),
         onError: (msg) => setError(msg),
       },
       { voiceId, language: "ar" }
@@ -146,8 +135,6 @@ export default function CallPage() {
   }
 
   const hangup = () => {
-    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current)
-    silenceTimerRef.current = null
     lastVoiceTsRef.current = 0
     voicedMsRef.current = 0
     mic.stop()
@@ -199,112 +186,212 @@ export default function CallPage() {
     }
   })()
 
-  return (
-    <div className="flex flex-col items-center gap-8 py-8">
-      <header className="text-center">
-        <h1 className="text-2xl font-bold tracking-tight">{t("call.title")}</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {connected
-            ? `الصوت: ${voices.find((v) => v.voice_id === voiceId)?.name ?? voiceId}`
-            : t("call.subtitle")}
-        </p>
-      </header>
+  const formatTime = (ts: number) =>
+    new Intl.DateTimeFormat("ar", {
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(new Date(ts))
 
-      <div className="relative">
-        <div
-          className={cn(
-            "size-48 transition-transform duration-300",
-            state === "speaking" && "scale-105"
+  // Layout = full viewport under the nav, split into scroll + bottom bar.
+  // We use h-[calc(100svh-3.5rem)] because NavBar is h-14 (3.5rem).
+  return (
+    <div className="-mx-4 -my-6 flex h-[calc(100svh-3.5rem)] flex-col sm:-mx-6">
+      {/* Scrollable chat area — newest message at the bottom (chat-like) */}
+      <div
+        ref={scrollRef}
+        className="flex-1 overflow-y-auto px-4 sm:px-6"
+      >
+        <div className="mx-auto flex min-h-full max-w-3xl flex-col">
+          {turns.length === 0 ? (
+            <EmptyState
+              connected={connected}
+              hasMic={hasMic}
+              voiceName={voices.find((v) => v.voice_id === voiceId)?.name ?? voiceId}
+              error={error}
+            />
+          ) : (
+            <>
+              {/* Spacer pushes messages to the BOTTOM when content is short */}
+              <div className="flex-1 min-h-4" />
+              <div className="flex flex-col gap-3 pb-4 pt-6">
+                {turns.map((turn, i) => (
+                  <ChatBubble key={i} turn={turn} formatTime={formatTime} />
+                ))}
+                {(state === "thinking" || state === "speaking") && <TypingBubble state={state} />}
+                {error && (
+                  <div className="mx-auto flex max-w-md items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                    <AlertCircle className="mt-0.5 size-4 shrink-0" />
+                    <span>{error}</span>
+                  </div>
+                )}
+              </div>
+            </>
           )}
-        >
-          <Orb
-            agentState={
-              state === "speaking" ? "talking" : state === "thinking" ? "thinking" : "idle"
-            }
-          />
         </div>
       </div>
 
-      <div className={cn("text-center text-base font-medium", stateColor)}>{stateLabel}</div>
+      {/* Sticky bottom control bar */}
+      <div className="border-t border-border/60 bg-background/95 px-4 pb-[max(env(safe-area-inset-bottom),1rem)] pt-3 backdrop-blur supports-[backdrop-filter]:bg-background/80 sm:px-6">
+        <div className="mx-auto flex max-w-3xl flex-col gap-2">
+          {/* Status pill */}
+          <div className="flex items-center justify-between gap-2 text-xs">
+            <div className="flex items-center gap-2">
+              <span
+                className={cn(
+                  "inline-block size-2 rounded-full",
+                  state === "listening"
+                    ? "bg-emerald-500 animate-pulse"
+                    : state === "thinking"
+                      ? "bg-amber-500 animate-pulse"
+                      : state === "speaking"
+                        ? "bg-primary animate-pulse"
+                        : "bg-muted-foreground/40"
+                )}
+              />
+              <span className={cn("font-medium", stateColor)}>{stateLabel}</span>
+            </div>
+            {stats && (
+              <span className="tabular-nums text-muted-foreground">
+                TTFA {stats.ttfa_ms} ms · إجمالي {stats.total_ms} ms
+              </span>
+            )}
+          </div>
 
-      {error && (
-        <div className="flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-          <AlertCircle className="size-4" />
-          {error}
-        </div>
-      )}
-
-      {!connected ? (
-        <div className="flex flex-col items-center gap-3">
-          {hasMic === false && (
-            <div className="flex max-w-md items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400">
-              <AlertCircle className="mt-0.5 size-4 shrink-0" />
-              <div>
-                لا يوجد ميكروفون متصل بهذا الجهاز. المكالمة المباشرة تتطلب جهازاً
-                فيه ميكروفون. افتح الصفحة من جوالك أو لابتوبك.
-              </div>
+          {/* Controls */}
+          {!connected ? (
+            <Button
+              size="lg"
+              onClick={start}
+              disabled={hasMic === false}
+              className="w-full"
+            >
+              <Mic className="me-2 size-5" />
+              {t("call.start")}
+            </Button>
+          ) : (
+            <div className="grid grid-cols-3 gap-2">
+              <Button
+                size="lg"
+                variant={mic.isRecording ? "secondary" : "default"}
+                onClick={() => (mic.isRecording ? mic.stop() : void mic.start())}
+                className="min-h-12"
+              >
+                {mic.isRecording ? (
+                  <MicOff className="size-5" />
+                ) : (
+                  <Mic className="size-5" />
+                )}
+                <span className="ms-2 hidden sm:inline">
+                  {mic.isRecording ? t("call.mute") : t("call.unmute")}
+                </span>
+              </Button>
+              <Button
+                size="lg"
+                variant="outline"
+                onClick={reset}
+                className="min-h-12"
+              >
+                <RotateCcw className="size-5" />
+                <span className="ms-2 hidden sm:inline">{t("call.reset")}</span>
+              </Button>
+              <Button
+                size="lg"
+                variant="destructive"
+                onClick={hangup}
+                className="min-h-12"
+              >
+                <PhoneOff className="size-5" />
+                <span className="ms-2 hidden sm:inline">{t("call.hangup")}</span>
+              </Button>
             </div>
           )}
-          <Button
-            size="lg"
-            onClick={start}
-            disabled={hasMic === false}
-            className="min-w-[180px]"
-          >
-            <Mic className="me-2 size-4" />
-            {t("call.start")}
-          </Button>
         </div>
-      ) : (
-        <div className="flex items-center gap-3">
-          <Button
-            size="lg"
-            variant={mic.isRecording ? "secondary" : "default"}
-            onClick={() => (mic.isRecording ? mic.stop() : void mic.start())}
-          >
-            {mic.isRecording ? (
-              <>
-                <MicOff className="me-2 size-4" /> {t("call.mute")}
-              </>
-            ) : (
-              <>
-                <Mic className="me-2 size-4" /> {t("call.unmute")}
-              </>
-            )}
-          </Button>
-          <Button size="lg" variant="outline" onClick={reset}>
-            <RotateCcw className="me-2 size-4" /> {t("call.reset")}
-          </Button>
-          <Button size="lg" variant="destructive" onClick={hangup}>
-            <PhoneOff className="me-2 size-4" /> {t("call.hangup")}
-          </Button>
+      </div>
+    </div>
+  )
+}
+
+function ChatBubble({
+  turn,
+  formatTime,
+}: {
+  turn: Turn
+  formatTime: (ts: number) => string
+}) {
+  const { t } = useTranslation()
+  const isUser = turn.role === "user"
+  return (
+    <div className={cn("flex flex-col", isUser ? "items-end" : "items-start")}>
+      <div
+        className={cn(
+          "max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed shadow-sm sm:max-w-[75%]",
+          isUser
+            ? "rounded-br-sm bg-primary text-primary-foreground"
+            : "rounded-bl-sm bg-card border"
+        )}
+      >
+        <span dir="auto">{turn.text}</span>
+      </div>
+      <span className="mt-1 px-1 text-[10px] text-muted-foreground">
+        {isUser ? t("call.you") : t("call.assistant")} · {formatTime(turn.ts)}
+      </span>
+    </div>
+  )
+}
+
+function TypingBubble({ state }: { state: ConvState }) {
+  const { t } = useTranslation()
+  const text =
+    state === "thinking" ? t("call.state_thinking") : t("call.state_speaking")
+  return (
+    <div className="flex items-start">
+      <div className="flex items-center gap-2 rounded-2xl rounded-bl-sm border bg-card px-4 py-2.5 text-sm text-muted-foreground shadow-sm">
+        <span className="flex gap-1">
+          <span className="size-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.3s]" />
+          <span className="size-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.15s]" />
+          <span className="size-1.5 animate-bounce rounded-full bg-current" />
+        </span>
+        <span>{text}</span>
+      </div>
+    </div>
+  )
+}
+
+function EmptyState({
+  connected,
+  hasMic,
+  voiceName,
+  error,
+}: {
+  connected: boolean
+  hasMic: boolean | null
+  voiceName: string
+  error: string | null
+}) {
+  const { t } = useTranslation()
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-6 py-12">
+      <div className="size-32">
+        <Orb agentState={connected ? "thinking" : "idle"} />
+      </div>
+      <div className="text-center">
+        <h1 className="text-2xl font-bold tracking-tight">{t("call.title")}</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {connected ? `الصوت: ${voiceName}` : t("call.subtitle")}
+        </p>
+      </div>
+      {hasMic === false && (
+        <div className="flex max-w-md items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400">
+          <AlertCircle className="mt-0.5 size-4 shrink-0" />
+          <div>
+            لا يوجد ميكروفون متصل بهذا الجهاز. افتح الصفحة من جوالك أو لابتوبك.
+          </div>
         </div>
       )}
-
-      {stats && (
-        <div className="text-xs tabular-nums text-muted-foreground">
-          TTFA: {stats.ttfa_ms} ms · إجمالي: {stats.total_ms} ms
-        </div>
-      )}
-
-      {turns.length > 0 && (
-        <div className="w-full max-w-2xl space-y-3 rounded-lg border bg-card p-4">
-          {turns.map((turn, i) => (
-            <div
-              key={i}
-              className={cn(
-                "flex flex-col gap-1 rounded-md p-3",
-                turn.role === "user" ? "bg-secondary/60" : "bg-primary/10 text-foreground"
-              )}
-            >
-              <span className="text-xs font-semibold text-muted-foreground">
-                {turn.role === "user" ? t("call.you") : t("call.assistant")}
-              </span>
-              <span dir="auto" className="text-sm leading-relaxed">
-                {turn.text}
-              </span>
-            </div>
-          ))}
+      {error && (
+        <div className="flex max-w-md items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          <AlertCircle className="mt-0.5 size-4 shrink-0" />
+          <span>{error}</span>
         </div>
       )}
     </div>
