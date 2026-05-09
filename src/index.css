@@ -1,0 +1,112 @@
+@import "tailwindcss";
+@plugin "tailwindcss-animate";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --font-sans:
+    "IBM Plex Sans Arabic", "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+:root {
+  --radius: 0.65rem;
+  --background: oklch(0.99 0 0);
+  --foreground: oklch(0.18 0.01 285);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.18 0.01 285);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.18 0.01 285);
+  /* Mostashar accent — purple-violet */
+  --primary: oklch(0.6 0.22 305);
+  --primary-foreground: oklch(0.99 0 0);
+  --secondary: oklch(0.97 0 286);
+  --secondary-foreground: oklch(0.21 0.01 286);
+  --muted: oklch(0.96 0 286);
+  --muted-foreground: oklch(0.55 0.02 285);
+  --accent: oklch(0.96 0.02 305);
+  --accent-foreground: oklch(0.21 0.01 286);
+  --destructive: oklch(0.58 0.24 27);
+  --destructive-foreground: oklch(0.99 0 0);
+  --border: oklch(0.92 0.01 286);
+  --input: oklch(0.92 0.01 286);
+  --ring: oklch(0.6 0.22 305);
+}
+
+.dark {
+  --background: oklch(0.16 0.01 285);
+  --foreground: oklch(0.98 0 0);
+  --card: oklch(0.21 0.01 286);
+  --card-foreground: oklch(0.98 0 0);
+  --popover: oklch(0.21 0.01 286);
+  --popover-foreground: oklch(0.98 0 0);
+  --primary: oklch(0.7 0.22 305);
+  --primary-foreground: oklch(0.16 0.01 285);
+  --secondary: oklch(0.27 0.01 286);
+  --secondary-foreground: oklch(0.98 0 0);
+  --muted: oklch(0.27 0.01 286);
+  --muted-foreground: oklch(0.7 0.02 286);
+  --accent: oklch(0.27 0.05 305);
+  --accent-foreground: oklch(0.98 0 0);
+  --destructive: oklch(0.65 0.22 27);
+  --destructive-foreground: oklch(0.98 0 0);
+  --border: oklch(1 0 0 / 12%);
+  --input: oklch(1 0 0 / 16%);
+  --ring: oklch(0.7 0.22 305);
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html {
+    color-scheme: light dark;
+  }
+  html[dir="rtl"] {
+    direction: rtl;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: var(--font-sans);
+  }
+  button {
+    cursor: pointer;
+  }
+}
+
+/* Orb animation — used by the voice indicator */
+@keyframes orb-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+@keyframes orb-pulse {
+  0%, 100% { opacity: 0.85; transform: scale(1); }
+  50%      { opacity: 1; transform: scale(1.04); }
+}
+@keyframes orb-talking {
+  0%   { filter: hue-rotate(0deg) brightness(1); }
+  50%  { filter: hue-rotate(20deg) brightness(1.15); }
+  100% { filter: hue-rotate(0deg) brightness(1); }
+}

@@ -1,0 +1,85 @@
+{
+  "app": {
+    "name": "Mostashar Voice",
+    "tagline": "High-quality Arabic voice cloning"
+  },
+  "nav": {
+    "library": "Voice Library",
+    "clone": "Clone a Voice",
+    "transcribe": "Speech to Text",
+    "call": "Live Call",
+    "language": "Language",
+    "theme": "Theme",
+    "theme_light": "Light",
+    "theme_dark": "Dark"
+  },
+  "library": {
+    "title": "Voices",
+    "subtitle": "Pick a voice to preview or generate new speech with",
+    "select_voice": "Select a voice...",
+    "search": "Search voices...",
+    "no_voice": "No voice found",
+    "preview": "Preview",
+    "delete": "Delete",
+    "delete_confirm": "Permanently delete this voice?",
+    "tts_input": "Type text here...",
+    "tts_generate": "Generate",
+    "tts_generating": "Generating...",
+    "tts_play": "Play",
+    "tts_pause": "Pause",
+    "duration_s": "{{seconds}}s"
+  },
+  "clone": {
+    "title": "Clone a New Voice",
+    "subtitle": "Upload 3-30 seconds of speech to create a clone",
+    "name": "Voice Name",
+    "name_placeholder": "e.g. Ahmed's voice",
+    "language": "Language",
+    "language_ar": "Arabic",
+    "language_en": "English",
+    "language_multi": "Multilingual",
+    "upload": "Upload audio file",
+    "drop_here": "or drop here",
+    "trim_region": "Select region (3-30 seconds)",
+    "submit": "Clone Voice",
+    "submitting": "Cloning...",
+    "success": "Voice cloned successfully",
+    "errors": {
+      "name_required": "Name is required",
+      "name_min": "Name is too short",
+      "file_required": "Audio file is required",
+      "duration_min": "Selection must be at least 3 seconds",
+      "duration_max": "Maximum 30 seconds"
+    }
+  },
+  "transcribe": {
+    "title": "Speech to Text",
+    "subtitle": "Upload audio and get text with speaker labels and timestamps",
+    "upload": "Upload audio file (mp3 / wav / m4a)",
+    "drop_here": "or drop here",
+    "submit": "Transcribe",
+    "submitting": "Transcribing...",
+    "result_text": "Full Text",
+    "result_segments": "Segments",
+    "speakers": "Speakers",
+    "speaker": "Speaker {{id}}",
+    "duration": "Duration",
+    "generation_time": "Generation time",
+    "no_audio": "No audio selected"
+  },
+  "call": {
+    "title": "Live Call",
+    "subtitle": "Real-time AI conversation (coming soon)",
+    "coming_soon": "Coming Soon"
+  },
+  "common": {
+    "loading": "Loading...",
+    "error": "An error occurred",
+    "retry": "Retry",
+    "close": "Close",
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "save": "Save",
+    "remove": "Remove"
+  }
+}
