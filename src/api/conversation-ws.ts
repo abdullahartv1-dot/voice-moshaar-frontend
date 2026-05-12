@@ -35,6 +35,14 @@ export interface ConversationCallbacks {
 export interface ConversationOptions {
   voiceId?: string
   language?: string
+  /**
+   * Optional Moshaar MCP credentials — when present, the backend will
+   * route this WS through the MCP-aware ReAct voice agent so the user
+   * can manage their workspace by voice. Stored only in localStorage
+   * + this object; passed as query params on the WS URL.
+   */
+  mcpUrl?: string
+  mcpKey?: string
 }
 
 export class ConversationClient {
@@ -50,6 +58,8 @@ export class ConversationClient {
     this.opts = {
       voiceId: opts.voiceId ?? "default",
       language: opts.language ?? "ar",
+      mcpUrl: opts.mcpUrl ?? "",
+      mcpKey: opts.mcpKey ?? "",
     }
   }
 
@@ -67,6 +77,8 @@ export class ConversationClient {
       language: this.opts.language,
     })
     if (API_KEY) params.set("api_key", API_KEY)
+    if (this.opts.mcpUrl) params.set("mcp_url", this.opts.mcpUrl)
+    if (this.opts.mcpKey) params.set("mcp_key", this.opts.mcpKey)
     const url = origin.replace(/^http/, "ws") + `/v1/conversation/ws?${params.toString()}`
 
     this.player = await createPCMPlayer()

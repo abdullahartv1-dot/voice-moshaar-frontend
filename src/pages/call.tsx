@@ -7,6 +7,10 @@ import { ConversationClient, type ConvState } from "@/api/conversation-ws"
 import { useMicCapture } from "@/hooks/useMicCapture"
 import { selectedVoiceAtom } from "@/store/atoms"
 import { BACKEND_URL, API_KEY } from "@/api/client"
+import { MCPSettingsDialog } from "@/components/mcp-settings-dialog"
+import { useMoshaarMCP } from "@/hooks/useMoshaarMCP"
+import { Button } from "@/components/ui/button"
+import { KeyRound } from "lucide-react"
 
 // Wait this long after the last voiced chunk before declaring end-of-utterance.
 // 2.5 s leaves room for natural mid-sentence pauses and thinking time.
@@ -36,6 +40,12 @@ export default function CallPage() {
   // micRms is updated ~15 fps from the worklet. We feed it to the orb +
   // the bottom level meter for instant "I hear you" feedback.
   const [micRms, setMicRms] = React.useState(0)
+
+  // Moshaar MCP per-user credentials (localStorage).  When connected, the
+  // backend routes the WS through the MCP-aware voice agent so the user
+  // can run platform operations by voice.
+  const mcp = useMoshaarMCP()
+  const [mcpDialogOpen, setMcpDialogOpen] = React.useState(false)
 
   const clientRef = React.useRef<ConversationClient | null>(null)
   const lastVoiceTsRef = React.useRef<number>(0)
@@ -158,7 +168,15 @@ export default function CallPage() {
           setStats({ ttfa_ms: info.ttfa_ms, total_ms: info.total_ms }),
         onError: (msg) => setError(msg),
       },
-      { voiceId, language: "ar" },
+      {
+        voiceId,
+        language: "ar",
+        // When the user has configured their Moshaar MCP key, pass it so
+        // the backend wires up the MCP-aware voice agent.  Read fresh
+        // from the hook each time the call starts.
+        mcpUrl: mcp.isConnected ? mcp.url : undefined,
+        mcpKey: mcp.isConnected ? mcp.key : undefined,
+      },
     )
     try {
       await client.connect()
@@ -229,26 +247,50 @@ export default function CallPage() {
   }, [])
 
   return (
-    <CallScreen
-      mode={mode}
-      state={state}
-      micRms={micRms}
-      voices={voices}
-      selectedVoice={voiceId}
-      onSelectedVoiceChange={setSelectedVoice}
-      callStartedAt={callStartedAt}
-      stats={stats}
-      error={error}
-      hasMic={hasMic}
-      turns={turns}
-      isMuted={isMuted}
-      isPaused={isPaused}
-      onStartTap={() => void start()}
-      onMuteToggle={toggleMute}
-      onPauseToggle={togglePause}
-      onEnd={endCall}
-      onStartNew={startNew}
-    />
+    <>
+      {/* Floating MCP connect button — always visible above the call UI. */}
+      <Button
+        type="button"
+        variant={mcp.isConnected ? "default" : "outline"}
+        size="sm"
+        onClick={() => setMcpDialogOpen(true)}
+        className="fixed top-4 left-4 z-40 gap-2 shadow-md"
+      >
+        <KeyRound className="size-4" />
+        <span className="font-medium">
+          {mcp.isConnected ? "موسحار متصل" : "ربط موسحار"}
+        </span>
+        {mcp.isConnected && (
+          <span className="ms-1 inline-block size-2 rounded-full bg-emerald-400 animate-pulse" />
+        )}
+      </Button>
+
+      <MCPSettingsDialog
+        open={mcpDialogOpen}
+        onOpenChange={setMcpDialogOpen}
+      />
+
+      <CallScreen
+        mode={mode}
+        state={state}
+        micRms={micRms}
+        voices={voices}
+        selectedVoice={voiceId}
+        onSelectedVoiceChange={setSelectedVoice}
+        callStartedAt={callStartedAt}
+        stats={stats}
+        error={error}
+        hasMic={hasMic}
+        turns={turns}
+        isMuted={isMuted}
+        isPaused={isPaused}
+        onStartTap={() => void start()}
+        onMuteToggle={toggleMute}
+        onPauseToggle={togglePause}
+        onEnd={endCall}
+        onStartNew={startNew}
+      />
+    </>
   )
 }
 
