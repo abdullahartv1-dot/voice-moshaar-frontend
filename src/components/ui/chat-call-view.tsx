@@ -33,9 +33,42 @@ import {
 import { VoicePicker } from "@/components/ui/voice-picker"
 import { ChatInputBar, type RecordingState } from "@/components/ui/chat-input-bar"
 import { ChatWaveform, type WaveformState } from "@/components/ui/chat-waveform"
+import { LiveCallOverlay } from "@/components/ui/live-call-overlay"
 import type { ConvState } from "@/api/conversation-ws"
 import type { Voice } from "@/types/api"
 import { cn } from "@/lib/utils"
+
+/**
+ * Track the on-screen keyboard height via the visualViewport API.
+ * Returns the number of pixels the keyboard is covering. On desktop
+ * and on iOS Safari before keyboard appears, returns 0.
+ *
+ * We use this to keep the input bar floating above the keyboard,
+ * since iOS Safari's default behavior is to slide the page up rather
+ * than resize the viewport — which can hide the input under the
+ * keyboard if the chat is taller than the visible area.
+ */
+function useKeyboardInset(): number {
+  const [inset, setInset] = React.useState(0)
+  React.useEffect(() => {
+    if (typeof window === "undefined" || !window.visualViewport) return
+    const vv = window.visualViewport
+    const update = () => {
+      // Difference between layout viewport and visual viewport ==
+      // keyboard (or floating bar) height. Clamp to >= 0.
+      const diff = window.innerHeight - vv.height - vv.offsetTop
+      setInset(Math.max(0, diff))
+    }
+    vv.addEventListener("resize", update)
+    vv.addEventListener("scroll", update)
+    update()
+    return () => {
+      vv.removeEventListener("resize", update)
+      vv.removeEventListener("scroll", update)
+    }
+  }, [])
+  return inset
+}
 
 export interface ChatCallTurn {
   role: "user" | "assistant"
@@ -116,18 +149,29 @@ export function ChatCallView({
   mcpConnected,
 }: ChatCallViewProps) {
   const scrollRef = React.useRef<HTMLDivElement | null>(null)
+  const kbInset = useKeyboardInset()
 
-  // Auto-scroll to bottom on new turns
+  // Auto-scroll to bottom on new turns. Force-scroll always (not just
+  // "if near bottom") because the user explicitly asked: "show messages
+  // bottom-to-top, not the opposite". Latest message stays visible
+  // right above the input bar.
   React.useEffect(() => {
     const el = scrollRef.current
     if (!el) return
-    // Only autoscroll if user is already near the bottom — don't yank
-    // them away from history they're reading.
-    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80
-    if (nearBottom) {
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" })
+  }, [turns.length, state])
+
+  // When the keyboard appears, also scroll the chat down so the latest
+  // message sits right above the input. Otherwise iOS Safari shows
+  // empty space between the keyboard and the messages.
+  React.useEffect(() => {
+    if (kbInset === 0) return
+    const el = scrollRef.current
+    if (!el) return
+    requestAnimationFrame(() => {
       el.scrollTo({ top: el.scrollHeight, behavior: "smooth" })
-    }
-  }, [turns.length])
+    })
+  }, [kbInset])
 
   // Waveform state — when live, reflect ConvState; when recording a
   // voice note, force "listening"; otherwise idle.
@@ -143,9 +187,18 @@ export function ChatCallView({
   const selectedName =
     voices.find((v) => v.voice_id === selectedVoice)?.name ?? selectedVoice
 
+  // Push the input bar up by the keyboard height so it never hides
+  // under the on-screen keyboard. Using `padding-bottom` on the outer
+  // container avoids re-laying out the input bar itself, which keeps
+  // the auto-scroll math correct.
+  const containerStyle: React.CSSProperties = kbInset > 0
+    ? { paddingBottom: `${kbInset}px` }
+    : {}
+
   return (
     <div
       className="-mx-4 -my-6 flex h-[calc(100svh-3.5rem)] flex-col sm:-mx-6"
+      style={containerStyle}
       dir="rtl"
     >
       {/* ── Header ── */}
@@ -176,6 +229,17 @@ export function ChatCallView({
           />
         </div>
       </div>
+
+      {/* ── Live-call overlay — only when broadcasting. Per user
+            feedback "أيقونة التفاعل تظهر في المقدمة" so user
+            sees the call is responsive. ── */}
+      <AnimatePresence>
+        {liveCallActive && (
+          <div className="border-b border-border/60 bg-background/95">
+            <LiveCallOverlay state={state} micRms={micRms} />
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* ── Chat history (scrollable) ── */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto bg-muted/20 px-3 sm:px-5">

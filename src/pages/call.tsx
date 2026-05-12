@@ -165,16 +165,17 @@ export default function CallPage() {
   }, [voiceId, mcp.isConnected, mcp.url, mcp.key, haptics])
 
   // ── Text mode ──
+  // Text input → text-only response (no TTS). The user is reading the
+  // chat, not listening. If they want spoken replies they use the mic
+  // (voice note) or live-call modes.
   const handleSendText = React.useCallback(
     async (content: string) => {
       setError(null)
-      // Optimistic user bubble — we don't get a transcript back for
-      // text-only turns so we render the message immediately.
       setTurns((p) => [...p, { role: "user", text: content, ts: Date.now() }])
       haptics.send()
       try {
         const client = await ensureConnection()
-        client.sendText(content)
+        client.sendText(content, { speak: false })
       } catch (e) {
         setError((e as Error).message)
       }

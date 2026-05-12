@@ -181,10 +181,17 @@ export class ConversationClient {
     }
   }
 
-  /** Send a text message directly (skip ASR). */
-  sendText(content: string) {
+  /** Send a text message directly (skip ASR).
+   *
+   *  By default the backend returns a text-only response (no TTS) since
+   *  the user is reading the chat. Pass `{ speak: true }` to also get
+   *  the response spoken back (used when the chat-input bar is
+   *  configured to speak typed messages). */
+  sendText(content: string, opts: { speak?: boolean } = {}) {
     if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ type: "text", content }))
+      this.ws.send(JSON.stringify({
+        type: "text", content, speak: opts.speak ?? false,
+      }))
       this.setState("thinking")
     }
   }
