@@ -53,10 +53,22 @@ export function useMicCapture(opts: MicCaptureOptions): MicCapture {
     try {
       stream = await navigator.mediaDevices.getUserMedia({
         audio: {
+          // Echo cancellation + noise suppression help in everyday
+          // rooms. Auto Gain Control is intentionally OFF: AGC on
+          // mobile Chrome compresses Arabic speech aggressively
+          // (chops sibilants and vowel onsets, which then trips
+          // Whisper's "silent / non-Arabic" rejection). Without AGC
+          // the captured audio is closer to what reaches our ears
+          // and STT transcribes more accurately.
           echoCancellation: true,
           noiseSuppression: true,
-          autoGainControl: true,
+          autoGainControl: false,
           channelCount: 1,
+          // Request a high source rate so the worklet has more bits
+          // to work with when downsampling to 16 kHz. Most modern
+          // mics deliver 48 kHz natively; if the device can't honor
+          // this, the browser falls back silently.
+          sampleRate: 48000,
         },
       })
     } catch (err) {

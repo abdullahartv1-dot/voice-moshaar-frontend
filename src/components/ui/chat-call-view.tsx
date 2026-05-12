@@ -230,21 +230,17 @@ export function ChatCallView({
         </div>
       </div>
 
-      {/* ── Chat history (scrollable) ── */}
+      {/* ── Chat history (scrollable) ──
+            flex-col-reverse pins the latest message to the bottom of the
+            visible viewport. We render turns in reverse so [latest,
+            previous, ..., oldest] become [bottom, ..., top] visually.
+            This matches WhatsApp/iMessage: newest at the bottom, older
+            messages stack upward. Browsers also auto-scroll to anchor
+            when the visible content grows on a flex-col-reverse
+            container, so the manual scrollTo dance becomes unnecessary
+            (we keep it as a belt-and-braces for unusual cases). ── */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto bg-muted/20 px-3 sm:px-5">
-        <div className="mx-auto flex max-w-3xl flex-col gap-2.5 py-4">
-          {turns.length === 0 && (
-            <EmptyState
-              liveCallActive={liveCallActive}
-              hasMic={hasMic ?? true}
-            />
-          )}
-          {turns.map((turn, i) => {
-            const isLast = i === turns.length - 1
-            // Older messages dim slightly so the latest exchange has
-            // visual focus (like ChatGPT's voice mode UI).
-            return <ChatBubble key={i} turn={turn} dim={!isLast && turns.length > 3} />
-          })}
+        <div className="mx-auto flex min-h-full max-w-3xl flex-col-reverse gap-2.5 py-4">
           {stats && turns.length > 0 && (
             <div className="flex justify-center pt-2">
               <span className="flex items-center gap-1 rounded-full bg-muted px-2.5 py-0.5 text-[10px] tabular-nums text-muted-foreground">
@@ -252,6 +248,23 @@ export function ChatCallView({
                 TTFA {stats.ttfa_ms} ms · إجمالي {stats.total_ms} ms
               </span>
             </div>
+          )}
+          {/* Slice + reverse: newest first → renders at bottom (col-reverse) */}
+          {turns.slice().reverse().map((turn, idx) => {
+            const isNewest = idx === 0
+            return (
+              <ChatBubble
+                key={turns.length - 1 - idx}
+                turn={turn}
+                dim={!isNewest && turns.length > 3}
+              />
+            )
+          })}
+          {turns.length === 0 && (
+            <EmptyState
+              liveCallActive={liveCallActive}
+              hasMic={hasMic ?? true}
+            />
           )}
         </div>
       </div>
