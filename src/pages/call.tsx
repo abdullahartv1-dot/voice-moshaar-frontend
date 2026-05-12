@@ -258,7 +258,7 @@ export default function CallPage() {
       >
         <KeyRound className="size-4" />
         <span className="font-medium">
-          {mcp.isConnected ? "موسحار متصل" : "ربط موسحار"}
+          {mcp.isConnected ? "مستشار متصل" : "ربط مستشار"}
         </span>
         {mcp.isConnected && (
           <span className="ms-1 inline-block size-2 rounded-full bg-emerald-400 animate-pulse" />

@@ -69,10 +69,10 @@ export function MCPSettingsDialog({ open, onOpenChange }: MCPSettingsDialogProps
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <KeyRound className="size-5" />
-            ربط حساب موسحار
+            ربط حساب مستشار
           </DialogTitle>
           <DialogDescription className="text-right">
-            أدخل مفتاح MCP الخاص بك من لوحة موسحار لتفعيل إدارة المهام
+            أدخل مفتاح MCP الخاص بك من لوحة مستشار لتفعيل إدارة المهام
             والقضايا والتقويم عبر المحادثة الصوتية. المفتاح يُحفظ في
             متصفحك فقط ولا يُرسل إلى أي خادم إلا عند بدء المكالمة.
           </DialogDescription>
@@ -108,7 +108,7 @@ export function MCPSettingsDialog({ open, onOpenChange }: MCPSettingsDialogProps
               autoComplete="off"
             />
             <p className="text-xs text-muted-foreground text-right">
-              تحصل عليه من لوحة موسحار &laquo; الإعدادات &laquo; MCP API Keys
+              تحصل عليه من لوحة مستشار &laquo; الإعدادات &laquo; MCP API Keys
             </p>
           </div>
 
