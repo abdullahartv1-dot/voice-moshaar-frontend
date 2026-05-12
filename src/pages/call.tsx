@@ -19,7 +19,7 @@ import { KeyRound } from "lucide-react"
 // Per-chunk VAD silence threshold for live-call mode. 2.5 s leaves room
 // for mid-sentence pauses but ends the turn promptly once the user
 // stops talking.
-const SILENCE_THRESHOLD_MS = 2500
+const SILENCE_THRESHOLD_MS = 2000
 const MIN_VOICED_MS = 300
 const CHUNK_MS = 64
 // Voice-note (press-and-hold) safety cap — the recording auto-commits
