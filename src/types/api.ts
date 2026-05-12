@@ -92,6 +92,12 @@ export interface HealthResponse {
   version: string
   asr_loaded: boolean
   asr_model: string | null
+  whisper_loaded?: boolean
+  whisper_model?: string | null
+  /** Voice-agent LLM driver: "gemma" (local sidecar) or "openai" (gpt-4o-mini). */
+  llm_backend?: "gemma" | "openai"
+  /** True when MV_OPENAI_KEY env var is set on the pod. */
+  openai_key_configured?: boolean
 }
 
 export interface ModelInfo {

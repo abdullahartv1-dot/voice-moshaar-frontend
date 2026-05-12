@@ -33,3 +33,5 @@ ios/
 
 # Claude Code memory
 .claude/
+
+.vercel
