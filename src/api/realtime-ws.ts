@@ -71,8 +71,20 @@ export class RealtimeClient {
 
     this.setState("connecting")
     // PCMPlayer is hardcoded to 24 kHz — happens to match OpenAI
-    // Realtime's pcm16 output format exactly.
+    // Realtime's pcm16 output format exactly. createPCMPlayer also
+    // resumes a suspended AudioContext, but iOS Safari sometimes
+    // needs an extra nudge — we play a tiny silent buffer below to
+    // make sure the audio output is actually unlocked before any real
+    // audio arrives.
     this.player = await createPCMPlayer()
+    // 100 ms of silence to "warm" the audio output device. Without
+    // this, the first real audio chunk on iOS Safari can be dropped.
+    try {
+      const silence = new Int16Array(24000 * 0.1)
+      this.player.pushPCM16LE(silence.buffer)
+    } catch {
+      // ignore
+    }
 
     return new Promise((resolve, reject) => {
       const ws = new WebSocket(url)
@@ -148,8 +160,24 @@ export class RealtimeClient {
     }
   }
 
+  private audioByteCount = 0
+  private audioChunkCount = 0
+
   private enqueuePCM(buf: ArrayBuffer) {
-    this.player?.pushPCM16LE(buf)
+    if (!this.player) {
+      console.warn("[realtime] received audio but PCMPlayer is null")
+      return
+    }
+    this.audioChunkCount += 1
+    this.audioByteCount += buf.byteLength
+    // Log every 25 chunks so we can spot stalls in the browser console.
+    if (this.audioChunkCount % 25 === 0) {
+      console.log(
+        `[realtime] played ${this.audioChunkCount} audio chunks ` +
+          `(${(this.audioByteCount / 1024).toFixed(1)} KB total)`,
+      )
+    }
+    this.player.pushPCM16LE(buf)
   }
 
   /** Send a 16 kHz PCM16LE mic chunk. Upsampled here to 24 kHz to
