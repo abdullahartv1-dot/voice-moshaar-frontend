@@ -9,6 +9,7 @@ const ClonePage = lazy(() => import("@/pages/clone"))
 const TranscribePage = lazy(() => import("@/pages/transcribe"))
 const DialoguePage = lazy(() => import("@/pages/dialogue"))
 const CallPage = lazy(() => import("@/pages/call"))
+const CallsPage = lazy(() => import("@/pages/calls"))
 
 function PageLoader() {
   return (
@@ -29,6 +30,7 @@ export default function App() {
           <Route path="transcribe" element={<TranscribePage />} />
           <Route path="dialogue" element={<DialoguePage />} />
           <Route path="call" element={<CallPage />} />
+          <Route path="calls" element={<CallsPage />} />
           <Route path="*" element={<Navigate to="/library" replace />} />
         </Route>
       </Routes>

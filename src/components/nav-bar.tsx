@@ -14,6 +14,7 @@ const navItems = [
   { to: "/transcribe", key: "transcribe" as const },
   { to: "/dialogue", key: "dialogue" as const },
   { to: "/call", key: "call" as const },
+  { to: "/calls", key: "calls" as const },
 ]
 
 export function NavBar() {
