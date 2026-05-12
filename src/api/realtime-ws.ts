@@ -191,12 +191,12 @@ export class RealtimeClient {
     this.player.pushPCM16LE(buf)
   }
 
-  /** Send a 16 kHz PCM16LE mic chunk. Upsampled here to 24 kHz to
-   *  match OpenAI Realtime's input_audio_format. */
+  /** Send a 16 kHz PCM16LE mic chunk straight through — the backend
+   *  now uses Whisper which prefers 16 kHz natively. (Old code
+   *  upsampled to 24 kHz for OpenAI Realtime; that backend is gone.) */
   sendAudioChunk(pcm16le16k: ArrayBuffer) {
     if (this.ws?.readyState !== WebSocket.OPEN) return
-    const upsampled = upsample16To24(pcm16le16k)
-    this.ws.send(upsampled)
+    this.ws.send(pcm16le16k)
   }
 
   /** Tell the server the user finished speaking — server-side VAD
@@ -234,23 +234,3 @@ export class RealtimeClient {
   }
 }
 
-/**
- * Simple linear-interpolation upsample from 16 kHz to 24 kHz PCM16 LE.
- * 2:3 ratio — for every 2 input samples, produce 3 output samples. The
- * worklet on the pod's input side handles its own resampling; we just
- * need to land bytes in OpenAI's expected format.
- */
-function upsample16To24(pcm16le: ArrayBuffer): ArrayBuffer {
-  const inView = new Int16Array(pcm16le)
-  const inLen = inView.length
-  const outLen = Math.floor((inLen * 24000) / 16000)
-  const out = new Int16Array(outLen)
-  for (let i = 0; i < outLen; i++) {
-    const t = (i * 16000) / 24000
-    const i0 = Math.floor(t)
-    const i1 = Math.min(inLen - 1, i0 + 1)
-    const frac = t - i0
-    out[i] = Math.round(inView[i0] * (1 - frac) + inView[i1] * frac)
-  }
-  return out.buffer
-}

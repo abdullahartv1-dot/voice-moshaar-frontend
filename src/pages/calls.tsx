@@ -25,6 +25,13 @@ import { cn } from "@/lib/utils"
 
 type ConnState = "idle" | "connecting" | "active"
 
+// VAD tuning — same shape as the chat-tab live mode. The backend
+// receives audio chunks and waits for our `commit` event before
+// running the STT → LLM → TTS pipeline.
+const SILENCE_THRESHOLD_MS = 2000
+const MIN_VOICED_MS = 300
+const CHUNK_MS = 64
+
 const STATE_LABEL: Record<RealtimeState, string> = {
   idle: "غير متصل",
   connecting: "يتصل…",
@@ -46,6 +53,8 @@ export default function CallsPage() {
   const haptics = useHaptics()
   const clientRef = React.useRef<RealtimeClient | null>(null)
   const partialAssistantRef = React.useRef<string>("")
+  const lastVoiceTsRef = React.useRef<number>(0)
+  const voicedMsRef = React.useRef<number>(0)
 
   // Pre-flight mic check
   React.useEffect(() => {
@@ -68,9 +77,28 @@ export default function CallsPage() {
   }, [])
 
   const mic = useMicCapture({
-    onChunk: (pcm, _speaking, rms) => {
+    onChunk: (pcm, speaking, rms) => {
       setMicRms(rms)
       clientRef.current?.sendAudioChunk(pcm)
+
+      // VAD: track when the user last had voiced energy, and when we've
+      // been quiet long enough after a real utterance, send a `commit`
+      // so the backend kicks off the STT → LLM → TTS pipeline. Without
+      // this the audio just accumulates forever and we never respond.
+      const now = performance.now()
+      if (speaking) {
+        lastVoiceTsRef.current = now
+        voicedMsRef.current += CHUNK_MS
+      }
+      if (
+        lastVoiceTsRef.current > 0 &&
+        voicedMsRef.current >= MIN_VOICED_MS &&
+        now - lastVoiceTsRef.current > SILENCE_THRESHOLD_MS
+      ) {
+        lastVoiceTsRef.current = 0
+        voicedMsRef.current = 0
+        clientRef.current?.commitTurn()
+      }
     },
   })
 
@@ -163,6 +191,8 @@ export default function CallsPage() {
     setConnState("idle")
     setRealtimeState("idle")
     setMicRms(0)
+    lastVoiceTsRef.current = 0
+    voicedMsRef.current = 0
   }
 
   // Teardown on unmount
