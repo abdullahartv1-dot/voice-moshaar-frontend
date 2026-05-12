@@ -10,6 +10,12 @@ import { useCallback, useEffect, useState } from "react"
  */
 
 const STORAGE_KEY = "moshaar:mcp:v1"
+// Custom event so all useMoshaarMCP() hooks stay in sync within the
+// same tab. The browser's built-in "storage" event only fires for
+// OTHER tabs, not the tab that called setItem. We dispatch our own
+// "moshaar-mcp:changed" event after every write so the dialog → page
+// → header buttons all refresh together.
+const CHANGE_EVENT = "moshaar-mcp:changed"
 
 const DEFAULT_URL =
   (import.meta.env.VITE_DEFAULT_MCP_URL as string | undefined) ||
@@ -47,6 +53,16 @@ function write(value: StoredMCP) {
   } catch {
     // ignore (private mode etc.)
   }
+  // Broadcast so every other useMoshaarMCP() hook in this tab can
+  // refresh its in-memory copy (the browser's built-in 'storage'
+  // event doesn't fire for same-tab writes).
+  if (typeof window !== "undefined") {
+    try {
+      window.dispatchEvent(new Event(CHANGE_EVENT))
+    } catch {
+      // ignore
+    }
+  }
 }
 
 export function useMoshaarMCP() {
@@ -55,10 +71,27 @@ export function useMoshaarMCP() {
   const [loaded, setLoaded] = useState(false)
 
   useEffect(() => {
-    const stored = read()
-    if (stored.url) setUrlState(stored.url)
-    if (stored.key) setKeyState(stored.key)
+    // Initial load from localStorage
+    const refresh = () => {
+      const stored = read()
+      setUrlState(stored.url || DEFAULT_URL)
+      setKeyState(stored.key || "")
+    }
+    refresh()
     setLoaded(true)
+
+    // Listen for in-tab + cross-tab changes so all hook instances stay
+    // in sync. Without this, the settings dialog can save the key but
+    // the page (which has its own useState copy) keeps the old value
+    // until a hard reload.
+    if (typeof window !== "undefined") {
+      window.addEventListener(CHANGE_EVENT, refresh)
+      window.addEventListener("storage", refresh)
+      return () => {
+        window.removeEventListener(CHANGE_EVENT, refresh)
+        window.removeEventListener("storage", refresh)
+      }
+    }
   }, [])
 
   const save = useCallback((nextUrl: string, nextKey: string) => {
