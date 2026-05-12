@@ -33,7 +33,7 @@ import {
 import { VoicePicker } from "@/components/ui/voice-picker"
 import { ChatInputBar, type RecordingState } from "@/components/ui/chat-input-bar"
 import { ChatWaveform, type WaveformState } from "@/components/ui/chat-waveform"
-import { LiveCallOverlay } from "@/components/ui/live-call-overlay"
+import { LiveCallOrb } from "@/components/ui/live-call-orb"
 import type { ConvState } from "@/api/conversation-ws"
 import type { Voice } from "@/types/api"
 import { cn } from "@/lib/utils"
@@ -230,17 +230,6 @@ export function ChatCallView({
         </div>
       </div>
 
-      {/* ── Live-call overlay — only when broadcasting. Per user
-            feedback "أيقونة التفاعل تظهر في المقدمة" so user
-            sees the call is responsive. ── */}
-      <AnimatePresence>
-        {liveCallActive && (
-          <div className="border-b border-border/60 bg-background/95">
-            <LiveCallOverlay state={state} micRms={micRms} />
-          </div>
-        )}
-      </AnimatePresence>
-
       {/* ── Chat history (scrollable) ── */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto bg-muted/20 px-3 sm:px-5">
         <div className="mx-auto flex max-w-3xl flex-col gap-2.5 py-4">
@@ -250,9 +239,12 @@ export function ChatCallView({
               hasMic={hasMic ?? true}
             />
           )}
-          {turns.map((turn, i) => (
-            <ChatBubble key={i} turn={turn} />
-          ))}
+          {turns.map((turn, i) => {
+            const isLast = i === turns.length - 1
+            // Older messages dim slightly so the latest exchange has
+            // visual focus (like ChatGPT's voice mode UI).
+            return <ChatBubble key={i} turn={turn} dim={!isLast && turns.length > 3} />
+          })}
           {stats && turns.length > 0 && (
             <div className="flex justify-center pt-2">
               <span className="flex items-center gap-1 rounded-full bg-muted px-2.5 py-0.5 text-[10px] tabular-nums text-muted-foreground">
@@ -284,10 +276,25 @@ export function ChatCallView({
         </div>
       )}
 
-      {/* ── Waveform (always above the input bar) ── */}
-      <div className="border-t border-border/60 bg-background/95 pt-2">
-        <ChatWaveform state={waveState} micRms={micRms} />
-      </div>
+      {/* ── Live-call orb (small, above input bar) ── per user feedback
+            "يكفي فقط مساحة بسيطة من الأسفل" — like ChatGPT's voice mode,
+            the orb is a small floating indicator and doesn't block the
+            chat history above. ── */}
+      <AnimatePresence>
+        {liveCallActive && (
+          <div className="flex justify-center bg-background/95">
+            <LiveCallOrb state={state} micRms={micRms} size={72} />
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* ── Waveform (always above the input bar). Hidden during live
+            call since the orb already shows state. ── */}
+      {!liveCallActive && (
+        <div className="border-t border-border/60 bg-background/95 pt-2">
+          <ChatWaveform state={waveState} micRms={micRms} />
+        </div>
+      )}
 
       {/* ── Input bar (3-mode) ── */}
       <ChatInputBar
@@ -336,7 +343,7 @@ function EmptyState({
   )
 }
 
-function ChatBubble({ turn }: { turn: ChatCallTurn }) {
+function ChatBubble({ turn, dim = false }: { turn: ChatCallTurn; dim?: boolean }) {
   const isUser = turn.role === "user"
   const hasAudio = isUser && !!turn.audioUrl
   const time = new Intl.DateTimeFormat("ar", {
@@ -347,9 +354,16 @@ function ChatBubble({ turn }: { turn: ChatCallTurn }) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 8, scale: 0.98 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
+      animate={{
+        opacity: dim ? 0.5 : 1,
+        y: 0,
+        scale: 1,
+      }}
       transition={{ duration: 0.18 }}
-      className={cn("flex flex-col", isUser ? "items-end" : "items-start")}
+      className={cn(
+        "flex flex-col",
+        isUser ? "items-end" : "items-start",
+      )}
     >
       <div
         className={cn(
