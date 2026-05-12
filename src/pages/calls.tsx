@@ -234,7 +234,7 @@ export default function CallsPage() {
                 {connState === "active" ? STATE_LABEL[realtimeState] : "جاهزة للاتصال"}
                 {" · "}
                 <span className="rounded bg-muted px-1.5 py-0.5 text-[10px]">
-                  openai realtime
+                  whisper + openai + elevenlabs
                 </span>
               </p>
             </div>
