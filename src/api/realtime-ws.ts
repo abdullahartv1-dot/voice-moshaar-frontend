@@ -110,8 +110,19 @@ export class RealtimeClient {
         reject(new Error("websocket error"))
       }
       ws.onclose = (ev) => {
-        if (!this.closedByCaller && ev.code !== 1000 && ev.code !== 1005) {
+        // Match conversation-ws: silence the expected disconnect codes
+        // so the user never sees "closed: 1011" or "closed: 1006" when
+        // they just put the phone in their pocket or switched tabs.
+        const isExpected = (
+          this.closedByCaller ||
+          ev.code === 1000 || ev.code === 1001 ||
+          ev.code === 1005 || ev.code === 1006 ||
+          ev.code === 1011 || ev.code === 1012 || ev.code === 1013
+        )
+        if (!isExpected) {
           this.cbs.onError?.(`closed: ${ev.code}`)
+        } else {
+          console.log(`[realtime-ws] closed (expected): code=${ev.code}`)
         }
         this.setState("idle")
         this.ws = null

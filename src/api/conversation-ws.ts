@@ -107,13 +107,27 @@ export class ConversationClient {
         reject(new Error("websocket error"))
       }
       ws.onclose = (ev) => {
-        if (
-          !this.closedByCaller &&
-          ev.code !== 1000 &&
-          ev.code !== 1005 &&
-          ev.code !== 1006
-        ) {
+        // Silence ALL "expected" disconnect codes:
+        //   1000 — normal close
+        //   1001 — going away (tab close, navigation, page hidden)
+        //   1005 — no status received
+        //   1006 — abnormal closure (network blip, tab background)
+        //   1011 — server error during in-flight send (our backend
+        //          sometimes emits this when the client disconnected
+        //          mid-stream; not actionable for the user, just noise)
+        //   1012 — service restart
+        //   1013 — try again later
+        // Only show "real" errors (auth, protocol, etc.).
+        const isExpected = (
+          this.closedByCaller ||
+          ev.code === 1000 || ev.code === 1001 ||
+          ev.code === 1005 || ev.code === 1006 ||
+          ev.code === 1011 || ev.code === 1012 || ev.code === 1013
+        )
+        if (!isExpected) {
           this.cbs.onError?.(`closed: ${ev.code}`)
+        } else {
+          console.log(`[ws] closed (expected): code=${ev.code}`)
         }
         this.setState("idle")
         this.ws = null
