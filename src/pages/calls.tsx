@@ -25,6 +25,7 @@ import { LiveKitCall, type RealtimeState, type RealtimeTurn } from "@/api/liveki
 import { useHaptics } from "@/hooks/useHaptics"
 import { useMoshaarMCP } from "@/hooks/useMoshaarMCP"
 import { MCPSettingsDialog } from "@/components/mcp-settings-dialog"
+import { ChatMarkdown } from "@/components/ui/chat-markdown"
 import { LiveCallOrb } from "@/components/ui/live-call-orb"
 import { Button } from "@/components/ui/button"
 import { AlertCircle, KeyRound, Phone, PhoneOff } from "lucide-react"
@@ -215,7 +216,14 @@ export default function CallsPage() {
                         : "rounded-bl-sm border bg-background",
                     )}
                   >
-                    {turn.text || "…"}
+                    {turn.role === "assistant" ? (
+                      // Assistant: render Markdown so Sara's tables /
+                      // bold names / lists show up properly.
+                      <ChatMarkdown content={turn.text || "…"} />
+                    ) : (
+                      // User: pure transcript, no formatting needed.
+                      <span>{turn.text || "…"}</span>
+                    )}
                     {turn.partial && (
                       <span className="ms-1 inline-block size-1.5 animate-pulse rounded-full bg-current align-middle" />
                     )}
