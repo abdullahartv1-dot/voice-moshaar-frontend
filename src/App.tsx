@@ -24,14 +24,18 @@ export default function App() {
     <Suspense fallback={<PageLoader />}>
       <Routes>
         <Route element={<Layout />}>
-          <Route index element={<Navigate to="/library" replace />} />
+          {/* Public-share mode: any visit lands on /calls. The other
+              pages still resolve if someone types the path manually so
+              we don't lose them — but root + unknown-path both go to
+              مكالمات. */}
+          <Route index element={<Navigate to="/calls" replace />} />
           <Route path="library" element={<LibraryPage />} />
           <Route path="clone" element={<ClonePage />} />
           <Route path="transcribe" element={<TranscribePage />} />
           <Route path="dialogue" element={<DialoguePage />} />
           <Route path="call" element={<CallPage />} />
           <Route path="calls" element={<CallsPage />} />
-          <Route path="*" element={<Navigate to="/library" replace />} />
+          <Route path="*" element={<Navigate to="/calls" replace />} />
         </Route>
       </Routes>
     </Suspense>

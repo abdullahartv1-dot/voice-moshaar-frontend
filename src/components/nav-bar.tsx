@@ -8,12 +8,16 @@ import { Button } from "@/components/ui/button"
 import { themeAtom } from "@/store/atoms"
 import { Orb } from "@/components/ui/orb"
 
+// Public-share mode: the page is being demoed to non-developers, so
+// only the مكالمات (Calls) tab is exposed. The other routes still
+// exist for internal use — just hidden from the top nav. To bring
+// them back, restore the full list:
+//   { to: "/library", key: "library" },
+//   { to: "/clone", key: "clone" },
+//   { to: "/transcribe", key: "transcribe" },
+//   { to: "/dialogue", key: "dialogue" },
+//   { to: "/call", key: "call" },
 const navItems = [
-  { to: "/library", key: "library" as const },
-  { to: "/clone", key: "clone" as const },
-  { to: "/transcribe", key: "transcribe" as const },
-  { to: "/dialogue", key: "dialogue" as const },
-  { to: "/call", key: "call" as const },
   { to: "/calls", key: "calls" as const },
 ]
 
@@ -31,7 +35,7 @@ export function NavBar() {
   return (
     <header className="sticky top-0 z-30 w-full border-b border-border/60 bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60">
       <div className="mx-auto flex h-14 max-w-6xl items-center gap-4 px-4 sm:px-6">
-        <NavLink to="/library" className="flex items-center gap-2 font-semibold">
+        <NavLink to="/calls" className="flex items-center gap-2 font-semibold">
           <div className="size-7">
             <Orb agentState="idle" />
           </div>

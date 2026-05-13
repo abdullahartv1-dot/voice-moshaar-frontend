@@ -185,10 +185,6 @@ export default function CallsPage() {
               <h2 className="text-base font-semibold">مكالمة مباشرة</h2>
               <p className="text-xs text-muted-foreground">
                 {connState === "active" ? STATE_LABEL[realtimeState] : "جاهزة للاتصال"}
-                {" · "}
-                <span className="rounded bg-muted px-1.5 py-0.5 text-[10px]">
-                  livekit + deepgram + cartesia
-                </span>
               </p>
             </div>
           </div>
@@ -278,7 +274,7 @@ export default function CallsPage() {
               </Button>
             )}
             <p className="text-[10px] text-muted-foreground">
-              تكلّم بشكل طبيعي. النموذج يستمع ويرد مباشرة عبر LiveKit.
+              تكلّم بشكل طبيعي. ساره تستمع وترد عليك مباشرة.
             </p>
           </div>
         </div>
