@@ -8,10 +8,19 @@
  *     {token, url, roomName}. No DB lookups, no auth gating yet — we
  *     add per-user gating once Moshaar NestJS issues identity tokens.
  *
+ * Agent dispatch: our LiveKit Cloud agent (Kai-197b) declares
+ * `agent_name="Kai-197b"` in its rtc_session decorator, which puts it
+ * in **explicit dispatch mode** — it does NOT auto-join new rooms.
+ * So we attach a RoomAgentDispatch to the access token so LiveKit
+ * spawns the agent worker into the room the moment the user joins.
+ * Without this the call goes silent: connection succeeds, mic streams
+ * fine, but nothing comes back because no agent ever joined.
+ *
  * Env vars (set in Vercel project settings):
  *   LIVEKIT_URL         wss://xxx.livekit.cloud
  *   LIVEKIT_API_KEY     APIxxxxxxxxxxxx
  *   LIVEKIT_API_SECRET  long base64-ish secret
+ *   LIVEKIT_AGENT_NAME  defaults to "Kai-197b"
  *
  * Request:
  *   POST /api/livekit-token   body: { user_id?, user_name?, mcp_url?, mcp_key? }
@@ -32,6 +41,7 @@
  */
 import type { VercelRequest, VercelResponse } from "@vercel/node"
 import { AccessToken } from "livekit-server-sdk"
+import { RoomAgentDispatch, RoomConfiguration } from "@livekit/protocol"
 
 export default async function handler(
   req: VercelRequest,
@@ -88,6 +98,13 @@ export default async function handler(
   if (mcpUrl || mcpKey) {
     at.metadata = JSON.stringify({ mcp_url: mcpUrl, mcp_key: mcpKey })
   }
+
+  // Dispatch the Arabic Sara agent into this room. Required because the
+  // agent declares agent_name="Kai-197b" → explicit dispatch mode.
+  const agentName = process.env.LIVEKIT_AGENT_NAME || "Kai-197b"
+  at.roomConfig = new RoomConfiguration({
+    agents: [new RoomAgentDispatch({ agentName })],
+  })
 
   const token = await at.toJwt()
 
