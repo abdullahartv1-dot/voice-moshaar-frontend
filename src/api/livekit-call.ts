@@ -27,8 +27,10 @@ import {
   LocalParticipant,
   Participant,
   RemoteParticipant,
+  RemoteTrack,
   Room,
   RoomEvent,
+  Track,
   type TrackPublication,
   type TranscriptionSegment,
 } from "livekit-client"
@@ -86,6 +88,12 @@ export class LiveKitCall {
   private state: RealtimeState = "idle"
   private micPollHandle: number | null = null
   private closedByCaller = false
+  /**
+   * HTMLAudioElements we attach for each remote audio track. The SDK
+   * does NOT auto-attach in v2 — you call `track.attach()` and put
+   * the element in the DOM yourself or no sound comes out.
+   */
+  private attachedAudioElements: HTMLMediaElement[] = []
 
   constructor(cbs: LiveKitCallbacks) {
     this.cbs = cbs
@@ -142,6 +150,17 @@ export class LiveKitCall {
     // 3) Publish mic. LiveKit Agent Builder's worker will join the room
     //    on its own (auto-dispatch) once we're connected.
     await room.localParticipant.setMicrophoneEnabled(true)
+
+    // 4) Unlock audio playback. iOS Safari and some Android browsers
+    //    block AudioContext until a user gesture; the click that
+    //    invoked this method is the gesture, so startAudio resolves
+    //    immediately. Without this call, agent audio is silently
+    //    queued but never played.
+    try {
+      await room.startAudio()
+    } catch (e) {
+      console.warn("[livekit] startAudio rejected:", e)
+    }
 
     this.room = room
     this.setState("listening")
@@ -205,6 +224,67 @@ export class LiveKitCall {
     room.on(RoomEvent.MediaDevicesError, (e: Error) => {
       this.cbs.onError?.(e.message || "media device error")
     })
+
+    // Manually attach remote audio tracks. The SDK in v2 doesn't render
+    // remote media for you — TrackSubscribed fires, you call attach(),
+    // then you put the <audio> element into the DOM yourself.
+    room.on(
+      RoomEvent.TrackSubscribed,
+      (
+        track: RemoteTrack,
+        _publication: TrackPublication,
+        participant: RemoteParticipant,
+      ) => {
+        if (participant.isLocal) return
+        if (track.kind !== Track.Kind.Audio) return
+        const el = track.attach()
+        el.setAttribute("data-lk-attached", "1")
+        // Hidden but in the DOM — browsers won't play detached elements.
+        el.style.display = "none"
+        document.body.appendChild(el)
+        this.attachedAudioElements.push(el)
+        // Best-effort kick on iOS — some versions need an explicit
+        // play() call even after startAudio.
+        const playPromise = el.play()
+        if (playPromise && typeof playPromise.catch === "function") {
+          playPromise.catch((err) =>
+            console.warn("[livekit] audio el.play() rejected:", err),
+          )
+        }
+      },
+    )
+
+    room.on(RoomEvent.TrackUnsubscribed, (track: RemoteTrack) => {
+      if (track.kind !== Track.Kind.Audio) return
+      const detached = track.detach()
+      for (const el of detached) {
+        el.remove()
+        const idx = this.attachedAudioElements.indexOf(el)
+        if (idx >= 0) this.attachedAudioElements.splice(idx, 1)
+      }
+    })
+
+    room.on(RoomEvent.AudioPlaybackStatusChanged, () => {
+      if (!this.room) return
+      if (!this.room.canPlaybackAudio) {
+        this.cbs.onError?.(
+          "تم حظر تشغيل الصوت من المتصفح — اضغط على الشاشة لتفعيله.",
+        )
+      }
+    })
+  }
+
+  /**
+   * Call this from a user-gesture handler (button click) if
+   * AudioPlaybackStatusChanged reports playback was blocked.
+   * Useful for explicit "tap to enable audio" prompts.
+   */
+  async unlockAudio(): Promise<void> {
+    try {
+      await this.room?.startAudio()
+    } catch (e) {
+      console.warn("[livekit] unlockAudio failed:", e)
+    }
   }
 
   private mapAgentState(s: string) {
@@ -247,6 +327,18 @@ export class LiveKitCall {
   async close(): Promise<void> {
     this.closedByCaller = true
     this.stopMicMetering()
+    // Detach any remaining audio elements left over from racing
+    // disconnect/unsub events.
+    for (const el of this.attachedAudioElements) {
+      try {
+        el.pause()
+        el.srcObject = null
+        el.remove()
+      } catch {
+        // ignore
+      }
+    }
+    this.attachedAudioElements = []
     if (this.room) {
       try {
         await this.room.disconnect()
