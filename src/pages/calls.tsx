@@ -1,20 +1,27 @@
 /**
- * Calls page (مكالمات) — low-latency live conversation via OpenAI's
- * Realtime API.
+ * Calls page (مكالمات) — low-latency live voice via LiveKit Cloud.
  *
- * Differs from the /call (chat) page in three ways:
- *   1. Audio-in, audio-out (no transcription round-trip)
- *   2. Uses OpenAI's voice (alloy/verse/shimmer/...) instead of Sara
- *   3. Server-side VAD — model decides when to start replying
+ * Pipeline (entirely server-side, the browser only sends/receives audio):
+ *   Browser mic → LiveKit room → Agent worker
+ *     → Deepgram Nova-3 Multilingual (STT, Arabic)
+ *     → OpenAI gpt-5.2-chat-latest with Moshaar MCP tools
+ *     → Cartesia Sonic-3 or ElevenLabs Multilingual v2 (TTS)
+ *   → audio track back to the browser, auto-played.
  *
- * Same MCP tool catalog as the chat path, so the user can still ask
- * about tasks/cases/calendar by voice and the model will execute MCP
- * calls in the middle of a turn.
+ * Differs from /call (محادثة):
+ *   1. WebRTC transport (LiveKit), not WebSocket
+ *   2. Semantic turn detection on the server — no VAD code here
+ *   3. Token comes from /api/livekit-token (Vercel function), never
+ *      exposes the LiveKit API secret to the browser
+ *
+ * MCP credentials: the LiveKit Agent Builder agent has a static MCP
+ * config set in its Actions tab, so the user gets Moshaar tools out of
+ * the box. The per-user MCP key from the dialog is forwarded as room
+ * metadata for when we swap to a custom Python worker that respects it.
  */
 import * as React from "react"
 
-import { RealtimeClient, type RealtimeState, type RealtimeTurn } from "@/api/realtime-ws"
-import { useMicCapture } from "@/hooks/useMicCapture"
+import { LiveKitCall, type RealtimeState, type RealtimeTurn } from "@/api/livekit-call"
 import { useHaptics } from "@/hooks/useHaptics"
 import { useMoshaarMCP } from "@/hooks/useMoshaarMCP"
 import { MCPSettingsDialog } from "@/components/mcp-settings-dialog"
@@ -24,13 +31,6 @@ import { AlertCircle, KeyRound, Phone, PhoneOff } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 type ConnState = "idle" | "connecting" | "active"
-
-// VAD tuning — same shape as the chat-tab live mode. The backend
-// receives audio chunks and waits for our `commit` event before
-// running the STT → LLM → TTS pipeline.
-const SILENCE_THRESHOLD_MS = 2000
-const MIN_VOICED_MS = 300
-const CHUNK_MS = 64
 
 const STATE_LABEL: Record<RealtimeState, string> = {
   idle: "غير متصل",
@@ -51,10 +51,8 @@ export default function CallsPage() {
 
   const mcp = useMoshaarMCP()
   const haptics = useHaptics()
-  const clientRef = React.useRef<RealtimeClient | null>(null)
-  const partialAssistantRef = React.useRef<string>("")
-  const lastVoiceTsRef = React.useRef<number>(0)
-  const voicedMsRef = React.useRef<number>(0)
+  const clientRef = React.useRef<LiveKitCall | null>(null)
+  const partialAssistantTsRef = React.useRef<number | null>(null)
 
   // Pre-flight mic check
   React.useEffect(() => {
@@ -76,132 +74,86 @@ export default function CallsPage() {
     }
   }, [])
 
-  const mic = useMicCapture({
-    onChunk: (pcm, speaking, rms) => {
-      setMicRms(rms)
-      clientRef.current?.sendAudioChunk(pcm)
-
-      // VAD: track when the user last had voiced energy, and when we've
-      // been quiet long enough after a real utterance, send a `commit`
-      // so the backend kicks off the STT → LLM → TTS pipeline. Without
-      // this the audio just accumulates forever and we never respond.
-      const now = performance.now()
-      if (speaking) {
-        lastVoiceTsRef.current = now
-        voicedMsRef.current += CHUNK_MS
-      }
-      if (
-        lastVoiceTsRef.current > 0 &&
-        voicedMsRef.current >= MIN_VOICED_MS &&
-        now - lastVoiceTsRef.current > SILENCE_THRESHOLD_MS
-      ) {
-        lastVoiceTsRef.current = 0
-        voicedMsRef.current = 0
-        clientRef.current?.commitTurn()
-      }
-    },
-  })
-
   const startCall = async () => {
     setError(null)
     setTurns([])
     setConnState("connecting")
     haptics.light()
-    try {
-      await mic.start()
-    } catch (e) {
-      setError((e as Error).message)
-      setConnState("idle")
-      return
-    }
-    const client = new RealtimeClient(
-      {
-        onState: setRealtimeState,
-        onUserTranscript: (text) => {
-          if (text) {
-            setTurns((p) => [...p, { role: "user", text, ts: Date.now() }])
-          }
-        },
-        onAssistantTextDelta: (delta) => {
-          partialAssistantRef.current += delta
-          setTurns((p) => {
-            const last = p[p.length - 1]
-            if (last && last.role === "assistant" && last.partial) {
-              const updated = [...p]
-              updated[updated.length - 1] = {
-                ...last,
-                text: partialAssistantRef.current,
-              }
-              return updated
-            }
-            return [
-              ...p,
-              {
-                role: "assistant",
-                text: partialAssistantRef.current,
-                ts: Date.now(),
-                partial: true,
-              },
-            ]
-          })
-        },
-        onAssistantTextDone: (full) => {
-          haptics.response()
-          partialAssistantRef.current = ""
-          setTurns((p) => {
-            const last = p[p.length - 1]
-            if (last && last.role === "assistant" && last.partial) {
-              const updated = [...p]
-              updated[updated.length - 1] = {
-                role: "assistant",
-                text: full || last.text,
-                ts: last.ts,
-              }
-              return updated
-            }
-            return p
-          })
-        },
-        onToolCallStarted: () => {
-          haptics.light()
-        },
-        onError: (msg) => setError(msg),
+
+    const client = new LiveKitCall({
+      onState: (s) => {
+        setRealtimeState(s)
+        // Haptic when the assistant starts talking — same UX as old client.
+        if (s === "speaking") haptics.response()
       },
-      {
+      onUserTranscript: (text, final) => {
+        if (!text || !final) return
+        setTurns((p) => [...p, { role: "user", text, ts: Date.now() }])
+      },
+      onAssistantTranscript: (text, final) => {
+        if (!text) return
+        setTurns((p) => {
+          const last = p[p.length - 1]
+          if (last && last.role === "assistant" && last.partial) {
+            const updated = [...p]
+            updated[updated.length - 1] = {
+              ...last,
+              text,
+              partial: !final,
+            }
+            return updated
+          }
+          // First chunk for this assistant turn.
+          const ts = partialAssistantTsRef.current ?? Date.now()
+          partialAssistantTsRef.current = final ? null : ts
+          return [...p, { role: "assistant", text, ts, partial: !final }]
+        })
+        if (final) partialAssistantTsRef.current = null
+      },
+      onMicLevel: (rms) => setMicRms(rms),
+      onError: (msg) => setError(msg),
+    })
+
+    try {
+      await client.connect({
         mcpUrl: mcp.isConnected ? mcp.url : undefined,
         mcpKey: mcp.isConnected ? mcp.key : undefined,
-      },
-    )
-    try {
-      await client.connect()
+      })
       clientRef.current = client
       setConnState("active")
     } catch (e) {
       setError((e as Error).message)
       setConnState("idle")
-      mic.stop()
+      try {
+        await client.close()
+      } catch {
+        // ignore
+      }
     }
   }
 
-  const endCall = () => {
+  const endCall = async () => {
     haptics.light()
-    mic.stop()
-    clientRef.current?.close()
+    const client = clientRef.current
     clientRef.current = null
     setConnState("idle")
     setRealtimeState("idle")
     setMicRms(0)
-    lastVoiceTsRef.current = 0
-    voicedMsRef.current = 0
+    partialAssistantTsRef.current = null
+    if (client) {
+      try {
+        await client.close()
+      } catch {
+        // ignore
+      }
+    }
   }
 
   // Teardown on unmount
   React.useEffect(() => {
     return () => {
-      mic.stop()
-      clientRef.current?.close()
+      void clientRef.current?.close()
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   return (
@@ -234,7 +186,7 @@ export default function CallsPage() {
                 {connState === "active" ? STATE_LABEL[realtimeState] : "جاهزة للاتصال"}
                 {" · "}
                 <span className="rounded bg-muted px-1.5 py-0.5 text-[10px]">
-                  whisper + openai + elevenlabs
+                  livekit + deepgram + cartesia
                 </span>
               </p>
             </div>
@@ -288,7 +240,7 @@ export default function CallsPage() {
         <div className="border-t border-border/60 bg-background/95 px-4 py-5 sm:px-6">
           <div className="mx-auto flex max-w-3xl flex-col items-center gap-3">
             {connState === "active" ? (
-              <LiveCallOrb state={realtimeState} micRms={micRms} size={100} />
+              <LiveCallOrb state={realtimeState === "connecting" ? "idle" : realtimeState} micRms={micRms} size={100} />
             ) : (
               <div className="size-[100px]" /> /* keep height stable */
             )}
@@ -308,7 +260,7 @@ export default function CallsPage() {
               </Button>
             ) : (
               <Button
-                onClick={endCall}
+                onClick={() => void endCall()}
                 size="lg"
                 variant="destructive"
                 className="h-12 gap-2 rounded-full px-6"
@@ -318,7 +270,7 @@ export default function CallsPage() {
               </Button>
             )}
             <p className="text-[10px] text-muted-foreground">
-              تكلّم بشكل طبيعي. النموذج يستمع ويرد مباشرة عبر OpenAI Realtime.
+              تكلّم بشكل طبيعي. النموذج يستمع ويرد مباشرة عبر LiveKit.
             </p>
           </div>
         </div>
@@ -345,7 +297,7 @@ function EmptyState({
         {hasMic === false
           ? "لا يوجد ميكروفون — افتح من جوالك."
           : connState === "idle"
-            ? "اضغط زر 'ابدأ المكالمة' للاتصال بمساعد OpenAI Realtime"
+            ? "اضغط زر 'ابدأ المكالمة' للاتصال بمساعدة ساره"
             : "أنت متصل. تكلّم بشكل طبيعي."}
       </p>
       {!mcp && (
