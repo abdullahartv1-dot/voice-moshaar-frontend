@@ -72,12 +72,13 @@ const AGENT_URL = "wss://agent.deepgram.com/v1/agent/converse"
 // Match LiveKit exactly so the comparison is about platforms, not models.
 const VOICE_ID = "cgSgspJ2msm6clMCkdW9"
 const TTS_MODEL_ID = "eleven_multilingual_v2"
-// nova-3 in the standalone STT plugin LiveKit uses routes Arabic
-// internally. The Voice Agent direct endpoint doesn't accept "ar" on
-// nova-3 — the model is English-tuned and falls back to Hindi/Urdu
-// phonetics on Saudi accents. nova-2-general DOES support ar natively
-// (https://developers.deepgram.com/docs/models-languages-overview).
-const STT_MODEL = "nova-2-general"
+// Deepgram Voice Agent listen.provider.model values that support Arabic:
+//   - nova-2                 ← plain name, broadest language coverage
+//   - flux-general-multi     ← newer multilingual, auto-detect
+//   - whisper-cloud          ← slower fallback
+// nova-3 / nova-2-general are NOT valid model names on Voice Agent (it
+// rejects them and closes the socket with code 1005). Verified by trial.
+const STT_MODEL = "nova-2"
 const LLM_MODEL = "gpt-4o"
 
 // Sample rates. The mic worklet hands us 16 kHz Int16LE chunks; the
@@ -106,6 +107,12 @@ export class DeepgramCall {
 
   // For interruption support — drop pending audio when user starts talking
   private agentSpeaking = false
+
+  // Last-known error string from a server JSON event. We hold onto it so
+  // that when the server closes with code 1005 (no status) we can still
+  // surface what actually went wrong (usually a Settings validation
+  // failure that arrives one tick before the close).
+  private lastServerError: string | null = null
 
   constructor(cbs: DeepgramCallbacks) {
     this.cbs = cbs
@@ -322,6 +329,11 @@ export class DeepgramCall {
 
   private handleEvent(msg: Record<string, unknown>) {
     const t = msg.type
+    // Verbose log of every server event — invaluable when a 1005
+    // happens because the JSON event arrives just before the close
+    // frame and is otherwise invisible.
+    console.debug("[deepgram] ←", t, msg)
+
     switch (t) {
       case "Welcome":
         // Server's hello — settings ack will follow.
@@ -372,28 +384,36 @@ export class DeepgramCall {
 
       case "Error":
       case "Warning": {
-        const detail = (msg.description || msg.message || JSON.stringify(msg)) as string
+        const detail = (msg.description ||
+          msg.message ||
+          msg.reason ||
+          JSON.stringify(msg)) as string
+        this.lastServerError = detail
         if (t === "Error") this.cbs.onError?.(`Deepgram: ${detail}`)
         else console.warn("[deepgram] warning:", detail)
         break
       }
 
       default:
-        // Unknown / future event — log for telemetry, don't error.
-        if (import.meta.env.DEV) {
-          console.debug("[deepgram] unhandled event:", t, msg)
-        }
+        // Unknown / future event — keep the verbose log above and move on.
+        break
     }
   }
 
   private handleClose(ev: CloseEvent) {
     if (!this.closedByCaller) {
-      // 1000 = normal closure (server-initiated shutdown OK), anything
-      // else is unexpected.
+      // Surface what we know. Code 1005 specifically means the server
+      // didn't send a close status — usually because it rejected our
+      // Settings message (bad model name, bad voice, etc.) one frame
+      // before tearing the socket down. lastServerError carries the
+      // JSON-event reason if Deepgram sent one.
+      const parts: string[] = [`code ${ev.code}`]
+      if (ev.reason) parts.push(ev.reason)
+      if (this.lastServerError) parts.push(this.lastServerError)
+      const detail = parts.join(" — ")
+      console.warn("[deepgram] socket closed:", detail)
       if (ev.code !== 1000) {
-        this.cbs.onError?.(
-          `انقطع الاتصال — حاول من جديد. (code ${ev.code})`,
-        )
+        this.cbs.onError?.(`انقطع الاتصال — ${detail}`)
       }
     }
     this.setState("idle")
