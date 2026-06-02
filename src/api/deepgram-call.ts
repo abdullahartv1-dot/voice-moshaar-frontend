@@ -222,7 +222,14 @@ export class DeepgramCall {
           },
         },
         think: {
-          provider: { type: "open_ai", model: LLM_MODEL, temperature: 0.3 },
+          // gpt-5.2-chat-latest is a reasoning-class model and rejects
+          // every temperature except the default (1). Setting it at all
+          // → 400 "unsupported_value" → Voice Agent closes with 1005.
+          // LiveKit's agent.py mirrors this by passing only
+          // reasoning_effort=low (no temperature). We omit both for
+          // simplicity — reasoning_effort isn't on Voice Agent's
+          // documented surface yet.
+          provider: { type: "open_ai", model: LLM_MODEL },
           prompt: SARA_PROMPT,
         },
         speak: {
