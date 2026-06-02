@@ -72,13 +72,16 @@ const AGENT_URL = "wss://agent.deepgram.com/v1/agent/converse"
 // Match LiveKit exactly so the comparison is about platforms, not models.
 const VOICE_ID = "cgSgspJ2msm6clMCkdW9"
 const TTS_MODEL_ID = "eleven_multilingual_v2"
-// Reverted to nova-3 per user — nova-2 closed the socket with 1005
-// during testing. nova-3 connects reliably but auto-detects language as
-// Hindi/Urdu for Saudi accents. With verbose console.debug logging now
-// in place, the next iteration can inspect what Deepgram actually
-// responds with and pick a working model name.
-const STT_MODEL = "nova-3"
-const LLM_MODEL = "gpt-4o"
+// flux-general-multi is Deepgram's purpose-built multilingual model. The
+// user's own Deepgram dashboard ships it as the default Voice Agent STT,
+// and it's the model designed for the Hajj pilgrim use case where the
+// language can be any of ~30. Unlike nova-3, it doesn't fall back to
+// Hindi phonetics on Saudi Arabic.
+const STT_MODEL = "flux-general-multi"
+// gpt-5.2-chat-latest matches LiveKit's agent.py exactly. Deepgram Voice
+// Agent passes the model name straight to OpenAI, so anything OpenAI
+// recognizes works here.
+const LLM_MODEL = "gpt-5.2-chat-latest"
 
 // Sample rates. The mic worklet hands us 16 kHz Int16LE chunks; the
 // player worklet expects 24 kHz Float32 chunks (we convert in here).
@@ -206,16 +209,16 @@ export class DeepgramCall {
         output: { encoding: "linear16", sample_rate: TTS_SR, container: "none" },
       },
       agent: {
-        language: "ar",
+        // No top-level language — flux-general-multi handles language
+        // detection itself, and any explicit hint would actually
+        // override it. Matches the user's own dashboard config.
         listen: {
           provider: {
             type: "deepgram",
+            // Version v2 is what the dashboard exports. Without it
+            // Deepgram defaults to v1 which doesn't include flux models.
+            version: "v2",
             model: STT_MODEL,
-            // Per-provider language is what Deepgram actually reads for
-            // the STT routing decision — the agent.language field above
-            // hints at TTS direction. Both set to "ar" so there's no
-            // ambiguity.
-            language: "ar",
           },
         },
         think: {
