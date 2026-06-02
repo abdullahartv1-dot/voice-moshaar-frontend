@@ -72,12 +72,13 @@ const AGENT_URL = "wss://agent.deepgram.com/v1/agent/converse"
 // Match LiveKit exactly so the comparison is about platforms, not models.
 const VOICE_ID = "cgSgspJ2msm6clMCkdW9"
 const TTS_MODEL_ID = "eleven_multilingual_v2"
-// flux-general-multi is Deepgram's purpose-built multilingual model. The
-// user's own Deepgram dashboard ships it as the default Voice Agent STT,
-// and it's the model designed for the Hajj pilgrim use case where the
-// language can be any of ~30. Unlike nova-3, it doesn't fall back to
-// Hindi phonetics on Saudi Arabic.
-const STT_MODEL = "flux-general-multi"
+// nova-2 with explicit language="ar" — the only Voice Agent STT path we
+// know forces Arabic. flux-general-multi auto-detects to Hindi/Urdu
+// for Saudi accents (verified by user), and nova-3 is English-only.
+// nova-2 previously appeared to 1005 the socket, but the real cause was
+// the gpt-5.2 temperature parameter — with that fixed, nova-2 connects
+// fine and we get the explicit language we need.
+const STT_MODEL = "nova-2"
 // gpt-5.2-chat-latest matches LiveKit's agent.py exactly. Deepgram Voice
 // Agent passes the model name straight to OpenAI, so anything OpenAI
 // recognizes works here.
@@ -209,16 +210,16 @@ export class DeepgramCall {
         output: { encoding: "linear16", sample_rate: TTS_SR, container: "none" },
       },
       agent: {
-        // No top-level language — flux-general-multi handles language
-        // detection itself, and any explicit hint would actually
-        // override it. Matches the user's own dashboard config.
+        language: "ar",
         listen: {
           provider: {
             type: "deepgram",
-            // Version v2 is what the dashboard exports. Without it
-            // Deepgram defaults to v1 which doesn't include flux models.
-            version: "v2",
             model: STT_MODEL,
+            // nova-2 honours the language hint (unlike flux which
+            // auto-detects regardless). Setting both agent.language
+            // and provider.language so neither layer has a chance to
+            // misroute Saudi accents to Hindi.
+            language: "ar",
           },
         },
         think: {
