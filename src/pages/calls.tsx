@@ -1,26 +1,27 @@
 /**
- * Calls page (مكالمات) — low-latency live voice via LiveKit Cloud.
+ * Calls page (مكالمات) — side-by-side LiveKit vs Deepgram comparison.
  *
- * Pipeline (entirely server-side, the browser only sends/receives audio):
- *   Browser mic → LiveKit room → Agent worker
- *     → Deepgram Nova-3 Multilingual (STT, Arabic)
- *     → OpenAI gpt-5.2-chat-latest with Moshaar MCP tools
- *     → Cartesia Sonic-3 or ElevenLabs Multilingual v2 (TTS)
- *   → audio track back to the browser, auto-played.
+ * Two voice paths, one UI:
+ *   LiveKit  → WebRTC → server-side Sara agent (agent.py)
+ *               ↳ Deepgram nova-3 STT + OpenAI LLM + ElevenLabs TTS
+ *   Deepgram → WebSocket → Deepgram Voice Agent
+ *               ↳ identical models/voice configured client-side
  *
- * Differs from /call (محادثة):
- *   1. WebRTC transport (LiveKit), not WebSocket
- *   2. Semantic turn detection on the server — no VAD code here
- *   3. Token comes from /api/livekit-token (Vercel function), never
- *      exposes the LiveKit API secret to the browser
+ * Both paths run with:
+ *   - Sara's full Arabic prompt (lib/sara-prompt.ts is the SOT)
+ *   - eleven_multilingual_v2 voice cgSgspJ2msm6clMCkdW9
+ *   - Same MCP credentials in the future (phase-2 wires function calling
+ *     into the Deepgram side; phase 1 LiveKit has MCP, Deepgram doesn't —
+ *     fine for measuring voice latency, unfair for measuring feature
+ *     parity)
  *
- * MCP credentials: the LiveKit Agent Builder agent has a static MCP
- * config set in its Actions tab, so the user gets Moshaar tools out of
- * the box. The per-user MCP key from the dialog is forwarded as room
- * metadata for when we swap to a custom Python worker that respects it.
+ * Metric on screen:
+ *   TTFA = ms from "user stopped speaking" → "first byte of agent audio".
+ *   This is the number you actually feel as a caller.
  */
 import * as React from "react"
 
+import { DeepgramCall } from "@/api/deepgram-call"
 import { LiveKitCall, type RealtimeState, type RealtimeTurn } from "@/api/livekit-call"
 import { useHaptics } from "@/hooks/useHaptics"
 import { useMoshaarMCP } from "@/hooks/useMoshaarMCP"
@@ -28,10 +29,15 @@ import { MCPSettingsDialog } from "@/components/mcp-settings-dialog"
 import { ChatMarkdown } from "@/components/ui/chat-markdown"
 import { LiveCallOrb } from "@/components/ui/live-call-orb"
 import { Button } from "@/components/ui/button"
-import { AlertCircle, KeyRound, Phone, PhoneOff } from "lucide-react"
+import { AlertCircle, KeyRound, Phone, PhoneOff, Zap } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 type ConnState = "idle" | "connecting" | "active"
+type Provider = "livekit" | "deepgram"
+
+interface CallClient {
+  close: () => Promise<void>
+}
 
 const STATE_LABEL: Record<RealtimeState, string> = {
   idle: "غير متصل",
@@ -40,6 +46,18 @@ const STATE_LABEL: Record<RealtimeState, string> = {
   thinking: "يفكّر",
   speaking: "يتحدث",
 }
+
+const PROVIDER_LABEL: Record<Provider, string> = {
+  livekit: "LiveKit",
+  deepgram: "Deepgram",
+}
+
+const PROVIDER_NOTE: Record<Provider, string> = {
+  livekit: "WebRTC + Sara كاملاً مع MCP",
+  deepgram: "WebSocket + Voice Agent (بدون MCP بعد)",
+}
+
+const PROVIDER_STORAGE_KEY = "voice-provider"
 
 export default function CallsPage() {
   const [connState, setConnState] = React.useState<ConnState>("idle")
@@ -50,9 +68,25 @@ export default function CallsPage() {
   const [hasMic, setHasMic] = React.useState<boolean | null>(null)
   const [mcpDialogOpen, setMcpDialogOpen] = React.useState(false)
 
+  // Provider toggle — persisted so reloading doesn't change the test.
+  const [provider, setProvider] = React.useState<Provider>(() => {
+    if (typeof window === "undefined") return "livekit"
+    const stored = window.localStorage.getItem(PROVIDER_STORAGE_KEY)
+    return stored === "deepgram" ? "deepgram" : "livekit"
+  })
+  React.useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(PROVIDER_STORAGE_KEY, provider)
+    }
+  }, [provider])
+
+  // Metrics shown live during the call. Reset on each new call.
+  const [ttfaMs, setTtfaMs] = React.useState<number | null>(null)
+  const [detectedLang, setDetectedLang] = React.useState<string | null>(null)
+
   const mcp = useMoshaarMCP()
   const haptics = useHaptics()
-  const clientRef = React.useRef<LiveKitCall | null>(null)
+  const clientRef = React.useRef<CallClient | null>(null)
   const partialAssistantTsRef = React.useRef<number | null>(null)
 
   // Pre-flight mic check
@@ -78,20 +112,21 @@ export default function CallsPage() {
   const startCall = async () => {
     setError(null)
     setTurns([])
+    setTtfaMs(null)
+    setDetectedLang(null)
     setConnState("connecting")
     haptics.light()
 
-    const client = new LiveKitCall({
-      onState: (s) => {
+    const commonCallbacks = {
+      onState: (s: RealtimeState) => {
         setRealtimeState(s)
-        // Haptic when the assistant starts talking — same UX as old client.
         if (s === "speaking") haptics.response()
       },
-      onUserTranscript: (text, final) => {
+      onUserTranscript: (text: string, final: boolean) => {
         if (!text || !final) return
-        setTurns((p) => [...p, { role: "user", text, ts: Date.now() }])
+        setTurns((p) => [...p, { role: "user" as const, text, ts: Date.now() }])
       },
-      onAssistantTranscript: (text, final) => {
+      onAssistantTranscript: (text: string, final: boolean) => {
         if (!text) return
         setTurns((p) => {
           const last = p[p.length - 1]
@@ -104,32 +139,44 @@ export default function CallsPage() {
             }
             return updated
           }
-          // First chunk for this assistant turn.
           const ts = partialAssistantTsRef.current ?? Date.now()
           partialAssistantTsRef.current = final ? null : ts
-          return [...p, { role: "assistant", text, ts, partial: !final }]
+          return [
+            ...p,
+            { role: "assistant" as const, text, ts, partial: !final },
+          ]
         })
         if (final) partialAssistantTsRef.current = null
       },
-      onMicLevel: (rms) => setMicRms(rms),
-      onError: (msg) => setError(msg),
-    })
+      onMicLevel: (rms: number) => setMicRms(rms),
+      onError: (msg: string) => setError(msg),
+    }
 
+    const mcpUrl = mcp.isConnected ? mcp.url : undefined
+    const mcpKey = mcp.isConnected ? mcp.key : undefined
+
+    let client: CallClient
     try {
-      await client.connect({
-        mcpUrl: mcp.isConnected ? mcp.url : undefined,
-        mcpKey: mcp.isConnected ? mcp.key : undefined,
-      })
+      if (provider === "livekit") {
+        const c = new LiveKitCall(commonCallbacks)
+        await c.connect({ mcpUrl, mcpKey })
+        client = c
+      } else {
+        const c = new DeepgramCall({
+          ...commonCallbacks,
+          onMetric: (m) => {
+            if (typeof m.ttfa_ms === "number") setTtfaMs(m.ttfa_ms)
+            if (m.detected_language) setDetectedLang(m.detected_language)
+          },
+        })
+        await c.connect({ mcpUrl, mcpKey })
+        client = c
+      }
       clientRef.current = client
       setConnState("active")
     } catch (e) {
       setError((e as Error).message)
       setConnState("idle")
-      try {
-        await client.close()
-      } catch {
-        // ignore
-      }
     }
   }
 
@@ -178,15 +225,44 @@ export default function CallsPage() {
         className="-mx-4 -my-6 flex h-[calc(100svh-3.5rem)] flex-col bg-gradient-to-b from-background to-muted/30 sm:-mx-6"
         dir="rtl"
       >
-        {/* Header */}
+        {/* Header — same as before, plus a live TTFA chip when active */}
         <div className="border-b border-border/60 bg-background/95 px-4 py-3 backdrop-blur sm:px-6">
           <div className="mx-auto flex max-w-3xl items-center justify-between">
             <div>
               <h2 className="text-base font-semibold">مكالمة مباشرة</h2>
               <p className="text-xs text-muted-foreground">
-                {connState === "active" ? STATE_LABEL[realtimeState] : "جاهزة للاتصال"}
+                {connState === "active"
+                  ? STATE_LABEL[realtimeState]
+                  : "جاهزة للاتصال"}
               </p>
             </div>
+            {connState === "active" && (
+              <div className="flex items-center gap-2 text-xs">
+                <span className="rounded-full bg-muted px-2 py-0.5 font-medium">
+                  {PROVIDER_LABEL[provider]}
+                </span>
+                {ttfaMs !== null && (
+                  <span
+                    className={cn(
+                      "flex items-center gap-1 rounded-full px-2 py-0.5 font-mono",
+                      ttfaMs < 500
+                        ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
+                        : ttfaMs < 1000
+                          ? "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300"
+                          : "bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300",
+                    )}
+                  >
+                    <Zap className="size-3" />
+                    {ttfaMs}ms
+                  </span>
+                )}
+                {detectedLang && (
+                  <span className="rounded-full bg-muted px-2 py-0.5 uppercase">
+                    {detectedLang}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
@@ -194,7 +270,12 @@ export default function CallsPage() {
         <div className="flex-1 overflow-y-auto px-4 sm:px-6">
           <div className="mx-auto flex max-w-3xl flex-col gap-3 py-4">
             {turns.length === 0 ? (
-              <EmptyState connState={connState} hasMic={hasMic} mcp={mcp.isConnected} />
+              <EmptyState
+                connState={connState}
+                hasMic={hasMic}
+                mcp={mcp.isConnected}
+                provider={provider}
+              />
             ) : (
               turns.map((turn, i) => (
                 <div
@@ -213,11 +294,8 @@ export default function CallsPage() {
                     )}
                   >
                     {turn.role === "assistant" ? (
-                      // Assistant: render Markdown so Sara's tables /
-                      // bold names / lists show up properly.
                       <ChatMarkdown content={turn.text || "…"} />
                     ) : (
-                      // User: pure transcript, no formatting needed.
                       <span>{turn.text || "…"}</span>
                     )}
                     {turn.partial && (
@@ -235,19 +313,32 @@ export default function CallsPage() {
           <div className="border-t border-border/60 bg-background/95 px-4 py-2 sm:px-6">
             <div className="mx-auto flex max-w-3xl items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
               <AlertCircle className="mt-0.5 size-3.5 shrink-0" />
-              <span>{error || "لا يوجد ميكروفون متصل بهذا الجهاز."}</span>
+              <span>
+                {error || "لا يوجد ميكروفون متصل بهذا الجهاز."}
+              </span>
             </div>
           </div>
         )}
 
-        {/* Orb + connect/end button */}
-        <div className="border-t border-border/60 bg-background/95 px-4 py-5 sm:px-6">
+        {/* Footer: provider toggle when idle, orb when connected */}
+        <div className="border-t border-border/60 bg-background/95 px-4 py-4 sm:px-6">
           <div className="mx-auto flex max-w-3xl flex-col items-center gap-3">
-            {connState === "active" ? (
-              <LiveCallOrb state={realtimeState === "connecting" ? "idle" : realtimeState} micRms={micRms} size={100} />
-            ) : (
-              <div className="size-[100px]" /> /* keep height stable */
+            {connState === "idle" && (
+              <ProviderToggle value={provider} onChange={setProvider} />
             )}
+
+            {connState === "active" ? (
+              <LiveCallOrb
+                state={
+                  realtimeState === "connecting" ? "idle" : realtimeState
+                }
+                micRms={micRms}
+                size={100}
+              />
+            ) : (
+              <div className="size-[100px]" />
+            )}
+
             {connState === "idle" ? (
               <Button
                 onClick={() => void startCall()}
@@ -256,7 +347,7 @@ export default function CallsPage() {
                 className="h-12 gap-2 rounded-full px-6"
               >
                 <Phone className="size-5" />
-                ابدأ المكالمة
+                ابدأ المكالمة عبر {PROVIDER_LABEL[provider]}
               </Button>
             ) : connState === "connecting" ? (
               <Button disabled size="lg" className="h-12 rounded-full px-6">
@@ -283,14 +374,56 @@ export default function CallsPage() {
   )
 }
 
+function ProviderToggle({
+  value,
+  onChange,
+}: {
+  value: Provider
+  onChange: (p: Provider) => void
+}) {
+  const providers: Provider[] = ["livekit", "deepgram"]
+  return (
+    <div className="flex w-full max-w-sm flex-col items-center gap-2">
+      <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
+        مزوّد الصوت
+      </div>
+      <div className="inline-flex rounded-full border border-border/60 bg-muted/40 p-1">
+        {providers.map((p) => {
+          const active = value === p
+          return (
+            <button
+              key={p}
+              type="button"
+              onClick={() => onChange(p)}
+              className={cn(
+                "rounded-full px-4 py-1.5 text-xs font-medium transition-colors",
+                active
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {PROVIDER_LABEL[p]}
+            </button>
+          )
+        })}
+      </div>
+      <p className="text-center text-[10px] text-muted-foreground">
+        {PROVIDER_NOTE[value]}
+      </p>
+    </div>
+  )
+}
+
 function EmptyState({
   connState,
   hasMic,
   mcp,
+  provider,
 }: {
   connState: ConnState
   hasMic: boolean | null
   mcp: boolean
+  provider: Provider
 }) {
   return (
     <div className="mx-auto flex max-w-md flex-col items-center gap-2 py-12 text-center">
@@ -301,12 +434,17 @@ function EmptyState({
         {hasMic === false
           ? "لا يوجد ميكروفون — افتح من جوالك."
           : connState === "idle"
-            ? "اضغط زر 'ابدأ المكالمة' للاتصال بمساعدة ساره"
+            ? `اضغط زر 'ابدأ المكالمة' للاتصال عبر ${PROVIDER_LABEL[provider]}`
             : "أنت متصل. تكلّم بشكل طبيعي."}
       </p>
-      {!mcp && (
+      {!mcp && provider === "livekit" && (
         <p className="mt-2 text-[10px] text-amber-600 dark:text-amber-400">
           ⚠️ مستشار غير مربوط — لن يستطيع الوصول للمهام/التقويم
+        </p>
+      )}
+      {provider === "deepgram" && (
+        <p className="mt-2 text-[10px] text-blue-600 dark:text-blue-400">
+          ℹ️ مسار Deepgram (مرحلة 1): مقارنة الصوت + الاستجابة فقط، بلا MCP
         </p>
       )}
     </div>
