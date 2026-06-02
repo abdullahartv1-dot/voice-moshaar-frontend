@@ -181,6 +181,13 @@ export class DeepgramCall {
     // Mirror of LiveKit's agent.py inference config + Sara persona. If
     // you change models/voice here, change them there too — that's
     // the whole point of the comparison.
+    //
+    // Language: forced to "ar" because nova-3 multi auto-detect routes
+    // colloquial Saudi/Khaleeji input to Hindi/Urdu surprisingly often
+    // (both write right-to-left and share phonetics with parts of
+    // Arabic in some regional accents). LiveKit's agent.py uses
+    // language="ar-SA" — we match. Switch back to "multi" when we add
+    // the multilingual Hajj use case and let the user pick.
     return {
       type: "Settings",
       audio: {
@@ -188,13 +195,12 @@ export class DeepgramCall {
         output: { encoding: "linear16", sample_rate: TTS_SR, container: "none" },
       },
       agent: {
-        language: "multi",
+        language: "ar",
         listen: {
           provider: {
             type: "deepgram",
             model: STT_MODEL,
-            // "multi" → nova-3 multilingual; matches LiveKit's setup as
-            // much as Deepgram's permitted values allow.
+            language: "ar",
           },
         },
         think: {
