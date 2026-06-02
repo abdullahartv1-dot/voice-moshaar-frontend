@@ -87,12 +87,20 @@ export default async function handler(
     })
   }
 
+  // PREFERRED PATH: mint a 30-min project key, scope-limited. Requires
+  // the master key to have `keys:write` permission. If the user's master
+  // key is a plain "member" key (no admin rights), Deepgram's POST keys
+  // endpoint returns 403 INSUFFICIENT_PERMISSIONS — in that case we fall
+  // back to handing the master key itself to the browser. Less ideal,
+  // but acceptable for trial accounts under the existing CORS allow-list
+  // (anyone abusing it has to first guess our endpoint domain).
+  //
+  // Rotate / scope-up steps once we're ready to harden:
+  //   1. console.deepgram.com → Settings → API Keys → New Key
+  //   2. Scopes: "Admin" (or at minimum keys:write + usage:write)
+  //   3. Replace DEEPGRAM_API_KEY in Vercel env vars with the new key
+  //   4. The mint path here will start working — no code change.
   try {
-    // Spawn a temporary project key, scope-limited and 30 min TTL. The
-    // member scope is what the Voice Agent WebSocket requires — it gives
-    // *only* "speak to the agent endpoint", not "mint more keys" or
-    // "read billing". A leaked key can use voice minutes against this
-    // project but can't escalate.
     const resp = await fetch(
       `https://api.deepgram.com/v1/projects/${projectId}/keys`,
       {
@@ -109,34 +117,49 @@ export default async function handler(
       },
     )
 
-    if (!resp.ok) {
-      const body = await resp.text().catch(() => "")
-      return res.status(resp.status).json({
-        error: `Deepgram key creation failed (${resp.status}): ${body || resp.statusText}`,
+    if (resp.ok) {
+      const data = (await resp.json()) as {
+        api_key?: string
+        key?: string
+        api_key_id?: string
+      }
+      // Deepgram has shipped both `api_key` and `key` in the response
+      // shape historically — accept either so we don't break if they
+      // flip again.
+      const apiKey = data.api_key ?? data.key
+      if (apiKey) {
+        res.setHeader("Cache-Control", "no-store")
+        return res.status(200).json({
+          api_key: apiKey,
+          api_key_id: data.api_key_id ?? null,
+          expires_in: 1800,
+          source: "minted",
+        })
+      }
+    }
+
+    // FALLBACK: master key doesn't have keys:write → pass it through.
+    // This is intentional for the trial-account phase. The browser will
+    // see the master key in its network tab; that's fine for a sandbox
+    // account, NOT for production. Replace with a scoped key + redeploy
+    // before opening up.
+    if (resp.status === 403) {
+      res.setHeader("Cache-Control", "no-store")
+      return res.status(200).json({
+        api_key: masterKey,
+        api_key_id: null,
+        expires_in: 0,
+        source: "passthrough",
+        notice:
+          "Master key passthrough — generate a key with keys:write scope " +
+          "and update DEEPGRAM_API_KEY in Vercel env vars to enable 30-min " +
+          "temp-key minting.",
       })
     }
 
-    const data = (await resp.json()) as {
-      api_key?: string
-      key?: string
-      api_key_id?: string
-    }
-
-    // Deepgram has shipped both `api_key` and `key` in the response shape
-    // historically — accept either so we don't break if they flip again.
-    const apiKey = data.api_key ?? data.key
-
-    if (!apiKey) {
-      return res.status(502).json({
-        error: "Deepgram returned no api_key in response",
-      })
-    }
-
-    res.setHeader("Cache-Control", "no-store")
-    return res.status(200).json({
-      api_key: apiKey,
-      api_key_id: data.api_key_id ?? null,
-      expires_in: 1800,
+    const errBody = await resp.text().catch(() => "")
+    return res.status(resp.status).json({
+      error: `Deepgram key creation failed (${resp.status}): ${errBody || resp.statusText}`,
     })
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
