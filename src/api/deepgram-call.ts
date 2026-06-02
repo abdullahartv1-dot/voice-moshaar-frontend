@@ -72,7 +72,12 @@ const AGENT_URL = "wss://agent.deepgram.com/v1/agent/converse"
 // Match LiveKit exactly so the comparison is about platforms, not models.
 const VOICE_ID = "cgSgspJ2msm6clMCkdW9"
 const TTS_MODEL_ID = "eleven_multilingual_v2"
-const STT_MODEL = "nova-3"
+// nova-3 in the standalone STT plugin LiveKit uses routes Arabic
+// internally. The Voice Agent direct endpoint doesn't accept "ar" on
+// nova-3 — the model is English-tuned and falls back to Hindi/Urdu
+// phonetics on Saudi accents. nova-2-general DOES support ar natively
+// (https://developers.deepgram.com/docs/models-languages-overview).
+const STT_MODEL = "nova-2-general"
 const LLM_MODEL = "gpt-4o"
 
 // Sample rates. The mic worklet hands us 16 kHz Int16LE chunks; the
@@ -200,6 +205,10 @@ export class DeepgramCall {
           provider: {
             type: "deepgram",
             model: STT_MODEL,
+            // Per-provider language is what Deepgram actually reads for
+            // the STT routing decision — the agent.language field above
+            // hints at TTS direction. Both set to "ar" so there's no
+            // ambiguity.
             language: "ar",
           },
         },
