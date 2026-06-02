@@ -72,13 +72,12 @@ const AGENT_URL = "wss://agent.deepgram.com/v1/agent/converse"
 // Match LiveKit exactly so the comparison is about platforms, not models.
 const VOICE_ID = "cgSgspJ2msm6clMCkdW9"
 const TTS_MODEL_ID = "eleven_multilingual_v2"
-// Deepgram Voice Agent listen.provider.model values that support Arabic:
-//   - nova-2                 ← plain name, broadest language coverage
-//   - flux-general-multi     ← newer multilingual, auto-detect
-//   - whisper-cloud          ← slower fallback
-// nova-3 / nova-2-general are NOT valid model names on Voice Agent (it
-// rejects them and closes the socket with code 1005). Verified by trial.
-const STT_MODEL = "nova-2"
+// Reverted to nova-3 per user — nova-2 closed the socket with 1005
+// during testing. nova-3 connects reliably but auto-detects language as
+// Hindi/Urdu for Saudi accents. With verbose console.debug logging now
+// in place, the next iteration can inspect what Deepgram actually
+// responds with and pick a working model name.
+const STT_MODEL = "nova-3"
 const LLM_MODEL = "gpt-4o"
 
 // Sample rates. The mic worklet hands us 16 kHz Int16LE chunks; the
