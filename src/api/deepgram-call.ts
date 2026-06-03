@@ -72,13 +72,14 @@ const AGENT_URL = "wss://agent.deepgram.com/v1/agent/converse"
 // Match LiveKit exactly so the comparison is about platforms, not models.
 const VOICE_ID = "cgSgspJ2msm6clMCkdW9"
 const TTS_MODEL_ID = "eleven_multilingual_v2"
-// nova-2 with explicit language="ar" — the only Voice Agent STT path we
-// know forces Arabic. flux-general-multi auto-detects to Hindi/Urdu
-// for Saudi accents (verified by user), and nova-3 is English-only.
-// nova-2 previously appeared to 1005 the socket, but the real cause was
-// the gpt-5.2 temperature parameter — with that fixed, nova-2 connects
-// fine and we get the explicit language we need.
-const STT_MODEL = "nova-2"
+// nova-3 with explicit language="ar" — the only STT model the user's
+// project currently has access to that respects the language hint.
+// nova-2 returns FAILED_TO_START_LISTENING on this project (verified
+// by direct WebSocket probe); nova-3-multilingual is access-denied;
+// flux-general-multi can't coexist with agent.language. With the
+// explicit "ar" hint, nova-3 honours Arabic instead of auto-detecting
+// to Hindi for Saudi accents.
+const STT_MODEL = "nova-3"
 // gpt-5.2-chat-latest matches LiveKit's agent.py exactly. Deepgram Voice
 // Agent passes the model name straight to OpenAI, so anything OpenAI
 // recognizes works here.

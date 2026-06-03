@@ -57,9 +57,14 @@ const OMNIVOICE_WS_URL =
   "wss://qrtemxwbqp6com-8000.proxy.runpod.net/ws/tts"
 
 // Sara voice profile id, created on the OmniVoice backend from the
-// VibeVoice gold reference (default.wav). If the profile is recreated,
-// update this.
-const SARA_VOICE_ID = "4381f3fc"
+// ACTUAL Sara reference clip (refs/voices/sara.wav, 4.3 MB) — NOT the
+// generic default.wav. The previous VibeVoice project established this
+// as Sara's signature voice.
+//
+// Sister profiles on the same backend (for future use):
+//   Ghaida  → 8c7b846a
+//   Monika  → 4740b884
+const SARA_VOICE_ID = "98100d72"
 
 // Audio formats
 const STT_SR = 16000
@@ -178,7 +183,9 @@ export class OmniVoiceCall {
         listen: {
           provider: {
             type: "deepgram",
-            model: "nova-2",
+            // nova-3 (NOT nova-2 — this project lacks access). With
+            // agent.language=ar set, nova-3 routes correctly to Arabic.
+            model: "nova-3",
             language: "ar",
           },
         },
@@ -187,9 +194,17 @@ export class OmniVoiceCall {
           prompt: SARA_PROMPT,
         },
         speak: {
-          // Use Deepgram's free Aura voice — we never play its output,
-          // but the settings block requires a valid speak provider.
-          provider: { type: "deepgram", model: "aura-2-thalia-en" },
+          // Must be ElevenLabs multilingual — Deepgram's Aura speak
+          // models are English-only and the Settings handshake rejects
+          // them when agent.language="ar" ("This language is not
+          // supported with Deepgram speak provider"). We drop the audio
+          // frames anyway in handleDeepgramMessage; the cost is just
+          // a few unused ElevenLabs tokens per turn.
+          provider: {
+            type: "eleven_labs",
+            model_id: "eleven_multilingual_v2",
+            voice_id: "cgSgspJ2msm6clMCkdW9",
+          },
         },
         greeting: SARA_GREETING,
       },
