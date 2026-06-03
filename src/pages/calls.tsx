@@ -23,6 +23,7 @@ import * as React from "react"
 
 import { DeepgramCall } from "@/api/deepgram-call"
 import { LiveKitCall, type RealtimeState, type RealtimeTurn } from "@/api/livekit-call"
+import { OmniVoiceCall } from "@/api/omnivoice-call"
 import { useHaptics } from "@/hooks/useHaptics"
 import { useMoshaarMCP } from "@/hooks/useMoshaarMCP"
 import { MCPSettingsDialog } from "@/components/mcp-settings-dialog"
@@ -33,7 +34,7 @@ import { AlertCircle, KeyRound, Phone, PhoneOff, Zap } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 type ConnState = "idle" | "connecting" | "active"
-type Provider = "livekit" | "deepgram"
+type Provider = "livekit" | "deepgram" | "omnivoice"
 
 interface CallClient {
   close: () => Promise<void>
@@ -50,11 +51,13 @@ const STATE_LABEL: Record<RealtimeState, string> = {
 const PROVIDER_LABEL: Record<Provider, string> = {
   livekit: "LiveKit",
   deepgram: "Deepgram",
+  omnivoice: "OmniVoice",
 }
 
 const PROVIDER_NOTE: Record<Provider, string> = {
   livekit: "WebRTC + Sara كاملاً مع MCP",
   deepgram: "WebSocket + Voice Agent (بدون MCP بعد)",
+  omnivoice: "STT+LLM عبر Deepgram + TTS بصوت ساره من OmniVoice محلي (RunPod)",
 }
 
 const PROVIDER_STORAGE_KEY = "voice-provider"
@@ -72,7 +75,9 @@ export default function CallsPage() {
   const [provider, setProvider] = React.useState<Provider>(() => {
     if (typeof window === "undefined") return "livekit"
     const stored = window.localStorage.getItem(PROVIDER_STORAGE_KEY)
-    return stored === "deepgram" ? "deepgram" : "livekit"
+    if (stored === "deepgram") return "deepgram"
+    if (stored === "omnivoice") return "omnivoice"
+    return "livekit"
   })
   React.useEffect(() => {
     if (typeof window !== "undefined") {
@@ -161,8 +166,18 @@ export default function CallsPage() {
         const c = new LiveKitCall(commonCallbacks)
         await c.connect({ mcpUrl, mcpKey })
         client = c
-      } else {
+      } else if (provider === "deepgram") {
         const c = new DeepgramCall({
+          ...commonCallbacks,
+          onMetric: (m) => {
+            if (typeof m.ttfa_ms === "number") setTtfaMs(m.ttfa_ms)
+            if (m.detected_language) setDetectedLang(m.detected_language)
+          },
+        })
+        await c.connect({ mcpUrl, mcpKey })
+        client = c
+      } else {
+        const c = new OmniVoiceCall({
           ...commonCallbacks,
           onMetric: (m) => {
             if (typeof m.ttfa_ms === "number") setTtfaMs(m.ttfa_ms)
@@ -381,7 +396,7 @@ function ProviderToggle({
   value: Provider
   onChange: (p: Provider) => void
 }) {
-  const providers: Provider[] = ["livekit", "deepgram"]
+  const providers: Provider[] = ["livekit", "deepgram", "omnivoice"]
   return (
     <div className="flex w-full max-w-sm flex-col items-center gap-2">
       <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
